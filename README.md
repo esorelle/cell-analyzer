@@ -13,7 +13,9 @@ B. Navigate to desired location and run git clone:
 
 # info before using cell-analyzer
 • cell-analyzer was developed to study whole-cell fluorescence of EBV+ cells
+
 • cell-analyzer is designed to analyze TIFF image files (extension '.tif' or '.TIF')
+
 • for now, out-of-the-box, image files must conform to the following format:
 
 	YYMMDD_XXXXXX_L##_##_d##_img###.tif
@@ -23,8 +25,11 @@ B. Navigate to desired location and run git clone:
 	• d## can specify the experimental timepoint; ex: d07 (day 7 post-event)
 	• img### specifies the image replicate for a single condition; ex: img001
 
+
 • for now, cell-analyzer only supports single-channel grayscale TIFF iamges
+
 • feel free to make modifications based on your file names, data format, etc.
+
 • these aspects are currently under development
 
 
