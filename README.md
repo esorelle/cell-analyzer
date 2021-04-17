@@ -4,10 +4,11 @@ A Python library for segmenting and analyzing cells
 
 # how to download cell-analyzer
 Do either of the following:
-	A. Download the repo zip file and unpack in desired location
+A. Download the repo zip file and unpack in desired location
 or
-	B. Navigate to desired location and run git clone:
-		git clone https://github.com/esorelle/cell-analyzer
+B. Navigate to desired location and run git clone:
+
+	git clone https://github.com/esorelle/cell-analyzer
 
 
 # info before using cell-analyzer
@@ -29,9 +30,13 @@ or
 
 # how to use cell-analyzer
 • cell-analyzer can be run using python3 from the command line:
+	
 	>>> python3 ./path/to/cell-analyzer/run.py './path/to/image_directory'
+
 • the target image directory is the only required argument
+
 • optional arguments:
+
 	--segment		[default is True, performs image segmentation]
 	--analyze		[default is True, performs clustering analysis]
 	--max_cell_area		[currently not used -- under development]
@@ -39,8 +44,10 @@ or
 	--num_clust		[default is 7, specifies # of clusters to ID]
 
 
+
 # how to modify or customize cell-analyzer for your project
 • see 'run.py' for more detail on each argument and function calls
+
 • see 'cell_analyzer/analyzer_core.py' for process, file i/o, and analysis
 
 
@@ -49,5 +56,4 @@ or
 
 There's a lot of great cell segmentation software out there.
 This is a very small project, mostly for fun.
-If you find it useful or make cool improvements to the code for your work...
-...then please remember to cite this project. Thanks!
+If you find it useful or make cool improvements to the code for your work...then please remember to cite this project. Thanks!
