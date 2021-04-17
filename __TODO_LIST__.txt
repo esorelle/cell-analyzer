@@ -1,0 +1,6 @@
+# 2021-04-17
+• handling of mutli-channel images (single-file m x n x c)?
+• different process_image flavors for different types of fluorescent images?
+	• e.g., nuclei vs. whole-cell vs. surface markers vs. organelles
+• fixed naming format and notes for use and/or advanced handling for output df?
+• address handling of problem child images (QC filter)
