@@ -44,7 +44,7 @@ or
 • see 'cell_analyzer/analyzer_core.py' for process, file i/o, and analysis
 
 
-# refer to '__TO-DO_LIST__.txt' on dev branch for planned updates
+# refer to '__TO-DO_LIST__.txt' for planned updates on dev branch
 
 
 There's a lot of great cell segmentation software out there.
