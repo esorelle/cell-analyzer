@@ -98,6 +98,8 @@ def read_and_process_directory(base_directory, max_cell_area, small_obj_size):
     # iteratively read in images by filenames
     for i, img_path in enumerate(image_list):
         img = plt.imread(img_path)
+        if np.ndim(img) > 2:    # account for duplicated channels in exported cellomics files
+            img = img[:,:,0]
         name = os.path.basename(img_path)
         labeled_cells, cell_props = process_image(img, max_cell_area, small_obj_size, name, save_path)
 
