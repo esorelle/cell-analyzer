@@ -171,7 +171,7 @@ def cluster_results(results_df, save_path, num_clust):
 
     # tSNE clone IDs
     plt.figure(figsize=(10, 7))
-    sns.scatterplot(
+    g = sns.scatterplot(
         x="tsne-2d-one", y="tsne-2d-two",
         hue="clone_ID",
         data=results_df,
@@ -180,6 +180,9 @@ def cluster_results(results_df, save_path, num_clust):
         alpha=0.95
     )
     plt.title('cell clones')
+    # new test -- legend labels to clone
+    for t, l in zip(g.legend().texts, clone_key): t.set_text(l)
+    # end new test
     plt.savefig(save_path + '/' + '_tsne_clones.png')
     plt.close()
 
