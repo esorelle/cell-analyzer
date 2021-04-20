@@ -128,6 +128,7 @@ def cluster_results(results_df, save_path, num_clust):
     clone_temp = results_df['_clone'].values
     clone_IDs = [ clone_key.index(item) for item in clone_temp ]
 
+    # dendrogram
     data = results_df.iloc[:, 6:].values
     plt.figure(figsize=(10, 7))
     plt.title("Cell Property Dendogram")
@@ -137,16 +138,11 @@ def cluster_results(results_df, save_path, num_clust):
     plt.savefig(save_path + '/' + '_cell_dendrogram.png')
     plt.close()
 
-
+    # generate cluster IDs
     cluster = AgglomerativeClustering(n_clusters=num_clust, affinity='euclidean', linkage='ward')
     ID = cluster.fit_predict(data)
-    # plt.figure(figsize=(10, 7))
-    # plt.scatter(data[:,0], data[:,5], c=cluster.labels_, cmap='rainbow')
-    # plt.title('agglomerative clustering')
-    # plt.savefig(save_path + '/' + '_cell_clustering.png')
-    # plt.close()
 
-
+    # add columns for tsne labeling
     data_embedded = TSNE(n_components=2).fit_transform(data)
     results_df['tsne-2d-one'] = data_embedded[:,0]
     results_df['tsne-2d-two'] = data_embedded[:,1]
@@ -180,9 +176,7 @@ def cluster_results(results_df, save_path, num_clust):
         alpha=0.95
     )
     plt.title('cell clones')
-    # new test -- legend labels to clone
     for t, l in zip(g.legend().texts, clone_key): t.set_text(l)
-    # end new test
     plt.savefig(save_path + '/' + '_tsne_clones.png')
     plt.close()
 
