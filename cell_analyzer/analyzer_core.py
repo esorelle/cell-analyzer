@@ -158,7 +158,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Spectral", num_clust),
         legend="full",
-        alpha=0.95
+        alpha=0.75
     )
     plt.title('cell clustering')
     plt.savefig(save_path + '/' + '_tsne_clusters.png')
@@ -173,7 +173,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("hls", len(clone_key)),
         legend="full",
-        alpha=0.95
+        alpha=0.75
     )
     plt.title('cell clones')
     for t, l in zip(g.legend().texts, clone_key): t.set_text(l)
@@ -189,7 +189,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("magma", len(np.unique(results_df['_days_post_inf']))),
         legend="full",
-        alpha=0.95
+        alpha=0.75
     )
     plt.title('days post infection')
     plt.savefig(save_path + '/' + '_tsne_dpi.png')
@@ -204,7 +204,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("viridis", len(np.unique(results_df['_moi']))),
         legend="full",
-        alpha=0.95
+        alpha=0.75
     )
     plt.title('EBV moi')
     plt.savefig(save_path + '/' + '_tsne_moi.png')
@@ -219,7 +219,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Spectral_r", as_cmap=True),
         legend=None,
-        alpha=0.95
+        alpha=0.75
     )
     norm = plt.Normalize(results_df['area'].min(), results_df['area'].max())
     sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
@@ -238,7 +238,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Greens", as_cmap=True),
         legend=None,
-        alpha=0.95
+        alpha=0.75
     )
     norm = plt.Normalize(results_df['mean'].min(), results_df['mean'].max())
     sm = plt.cm.ScalarMappable(cmap="Greens", norm=norm)
@@ -257,7 +257,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Blues", as_cmap=True),
         legend=None,
-        alpha=0.95
+        alpha=0.75
     )
     norm = plt.Normalize(results_df['min'].min(), results_df['min'].max())
     sm = plt.cm.ScalarMappable(cmap="Blues", norm=norm)
@@ -276,7 +276,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Reds", as_cmap=True),
         legend=None,
-        alpha=0.95
+        alpha=0.75
     )
     norm = plt.Normalize(results_df['max'].min(), results_df['max'].max())
     sm = plt.cm.ScalarMappable(cmap="Reds", norm=norm)
@@ -295,7 +295,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Purples", as_cmap=True),
         legend=None,
-        alpha=0.95
+        alpha=0.75
     )
     norm = plt.Normalize(results_df['eccentricity'].min(), results_df['eccentricity'].max())
     sm = plt.cm.ScalarMappable(cmap="Purples", norm=norm)
@@ -314,7 +314,7 @@ def cluster_results(results_df, save_path, num_clust):
         data=results_df,
         palette=sns.color_palette("Oranges", as_cmap=True),
         legend=None,
-        alpha=0.95
+        alpha=0.75
     )
     norm = plt.Normalize(results_df['extent'].min(), results_df['extent'].max())
     sm = plt.cm.ScalarMappable(cmap="Oranges", norm=norm)
