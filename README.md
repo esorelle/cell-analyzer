@@ -16,7 +16,7 @@ B. Navigate to desired location and run git clone:
 
 • cell-analyzer is designed to analyze TIFF image files (extension '.tif' or '.TIF')
 
-• for now, out-of-the-box, image files must conform to the following format:
+• cell-analyzer handles general fluorescence images and can optionally parse metadata from image titles in the following format by setting --formatted_titles=True:
 
 	YYMMDD_XXXXXX_L##_##_d##_img###.tif
 	• YYMMDD is a date identifier
@@ -26,11 +26,11 @@ B. Navigate to desired location and run git clone:
 	• img### specifies the image replicate for a single condition; ex: img001
 
 
-• for now, cell-analyzer only supports single-channel grayscale TIFF iamges
+• cell-analyzer now supports single- and multi-channel TIFF iamges
 
 • feel free to make modifications based on your file names, data format, etc.
 
-• these aspects are currently under development
+• aspects of the code may be infrequently updated
 
 
 # how to use cell-analyzer
@@ -56,9 +56,10 @@ B. Navigate to desired location and run git clone:
 • see 'cell_analyzer/analyzer_core.py' for process, file i/o, and analysis
 
 
-# refer to '__TO-DO_LIST__.txt' for planned updates on dev branch
+# refer to '__TO-DO_LIST__.txt' for planned updates and resolved issues
 
 
 There's a lot of great cell segmentation software out there.
 This is a very small project, mostly for fun.
+For complex segmentation tasks, use machine learning instead :)
 If you find it useful or make cool improvements to the code for your work...then please remember to cite this project. Thanks!
