@@ -1,83 +1,244 @@
-#! usr/bin/python3
+#! /usr/bin/python3
 
 import os
 import glob
 import numpy as np
-import skimage as sk
 import pandas as pd
+import skimage as sk
+import seaborn as sns
 import matplotlib.pyplot as plt
 import scipy.cluster.hierarchy as shc
-import seaborn as sns
-from scipy import ndimage as ndi
 from datetime import datetime as dt
-from skimage import filters, feature, measure, morphology
+from matplotlib.colors import ListedColormap
+from matplotlib import cm
+from skimage import exposure, feature, filters, measure, morphology, segmentation
+from scipy import ndimage as ndi
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.manifold import TSNE
 
 
-def process_image(img, max_cell_area, small_obj_size, name='temp.TIF', save_path = '.'):
-    # performs optimized processing steps -- bg norm and watershed
+def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name='temp.TIF', save_path = '.'):
+    img_dims = np.shape(img)
+    print('image dimensions: ', img_dims)
 
-    # global background normalization for light intensity variation
-    blur_img = filters.gaussian(img, sigma = 1)
-    bg = filters.threshold_local(img, 501)
-    img_corr = img / bg
-    img_corr = img_corr / np.max(img_corr)
+    if len(img_dims) < 3:
+        n_chan = 1
+        content = img
+        v_min, v_max = np.percentile(content, (1,99))
+        content_scaled = exposure.rescale_intensity(content, in_range=(v_min, v_max))
 
-    # threshold of normalized image
-    otsu = filters.threshold_otsu(img_corr)
-    otsu_mask = img_corr > otsu
-    img_masked = img_corr * otsu_mask
+    else:
+        # handle if first channel is blank
+        if np.mean(img[:,:,0][:]) < 0.1:
+            img = img[:,:,1:]
+            img_dims = np.shape(img)
+        # handle other blank channels
+        n_chan = img_dims[2]
+        base = img[:,:,0]
+        # restack image, excluding blank channels
+        for channel in range(1, n_chan):
+            if np.sum(img[:,:,channel][:]) > 0.01:
+                base = np.stack((base, img[:,:,channel]), axis=2)
+        img = base
+        img_dims = np.shape(img)
+        n_chan = img_dims[2]
 
-    # QC filter to remove very noisy / low dynamic range images
-    if np.sum(np.ndarray.flatten(otsu_mask)) > 0.98 * np.size(img):
-        print('skipping: ' + name + '\n')
-        print('[ reason: poor dynamic range (1) ]')
-        return [], []
+        ### custom colormaps
+        N = 256
+        # blue
+        blues = np.ones((N,4))
+        blues[:,0] = np.zeros(N)
+        blues[:,1] = np.zeros(N)
+        blues[:,2] = np.linspace(0, 1, N)
+        blue_cmap = ListedColormap(blues)
+        # green
+        greens = np.ones((N,4))
+        greens[:,0] = np.zeros(N)
+        greens[:,1] = np.linspace(0, 1, N)
+        greens[:,2] = np.zeros(N)
+        green_cmap = ListedColormap(greens)
+        # red
+        reds = np.ones((N,4))
+        reds[:,0] = np.linspace(0, 1, N)
+        reds[:,1] = np.zeros(N)
+        reds[:,2] = np.zeros(N)
+        red_cmap = ListedColormap(reds)
 
-    # find local extrema
-    coords = feature.peak_local_max(img_masked, min_distance=20)
+        # separate and scale channels for vis
+        content = np.sum(img, axis=2)
+        v_min, v_max = np.percentile(content, (1,99))
+        content_scaled = exposure.rescale_intensity(content, in_range=(v_min, v_max))
+
+        if n_chan >= 1:
+            dapi = img[:,:,0]
+            v_min, v_max = np.percentile(dapi, (1,99))
+            dapi_scaled = exposure.rescale_intensity(dapi, in_range=(v_min, v_max))
+        if n_chan >= 2:
+            gfp = img[:,:,1]
+            v_min, v_max = np.percentile(gfp, (1,99))
+            gfp_scaled = exposure.rescale_intensity(gfp, in_range=(v_min, v_max))
+        if n_chan == 3:
+            cy5 = img[:,:,2]
+            v_min, v_max = np.percentile(cy5, (1,99))
+            cy5_scaled = exposure.rescale_intensity(cy5, in_range=(v_min, v_max))
+        if n_chan > 3:
+            print('handling of more than 3 image channels not supported')
+
+    ### handle single high-res or stitched low-res images (large dimensions)
+    if np.logical_and(np.shape(img)[0] < 2500, np.shape(img)[1] < 2500):
+        # correct image and create content mask
+        bg = filters.threshold_local(content, norm_window)
+        norm = content / bg
+        blur = filters.gaussian(norm, sigma=2)
+        # blur = filters.gaussian(content, sigma=2)
+        otsu = filters.threshold_otsu(blur)
+        mask = blur > otsu
+        mask_filled = morphology.remove_small_holes(mask, min_hole_size)
+        selem = morphology.disk(3)
+        mask_opened = morphology.binary_opening(mask_filled, selem)
+        mask_filtered = morphology.remove_small_objects(mask_opened, min_cell_size)
+        heavy_blur = filters.gaussian(content, extrema_blur)
+        blur_masked = heavy_blur * mask_filtered
+    else:
+        blur = filters.gaussian(content, sigma=2)
+        otsu = filters.threshold_otsu(blur)
+        mask = blur > otsu
+        mask_filtered = mask
+        blur_masked = mask * blur
+
+    # find local maxima
+    coords = feature.peak_local_max(blur_masked, min_distance=peak_sep)
     coords_T = []
     coords_T += coords_T + [[point[1], point[0]] for point in coords]
     coords_T = np.array(coords_T)
-    distance = ndi.distance_transform_edt(otsu_mask)
-    markers = np.zeros(np.shape(img))
+    markers = np.zeros(np.shape(content))
     for i, point in enumerate(coords):
         markers[point[0], point[1]] = i
 
-    # watershed from local extrema and mask
-    ws2 = morphology.watershed(-distance, markers, mask=otsu_mask, connectivity=2, watershed_line=True)
-    ws3 = ws2 > 0
-    ws4 = morphology.remove_small_objects(ws3, small_obj_size)
-
-    # get labeled cell regions
-    labeled_cells = measure.label(ws4)
-    cell_props = measure.regionprops(labeled_cells, img)
-
-    # save processing steps for review & QC
-    fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(12,7))
-    ax[0, 0].imshow(img, cmap='gray')
-    ax[0, 0].set_title('raw')
-    ax[0, 1].imshow(img_corr)
-    ax[0, 1].set_title('corrected')
-    ax[0, 2].imshow(otsu_mask)
-    ax[0, 2].set_title('otsu mask')
-    ax[1, 0].imshow(distance, cmap='magma')
-    ax[1, 0].set_title('distance transform')
-    ax[1, 1].imshow(ws2, cmap='magma')
-    ax[1, 1].plot(coords[:,1], coords[:,0], c='red', marker = '*', linestyle='', markersize=3)
-    ax[1, 1].set_title('watershed + extrema')
-    ax[1, 2].imshow(labeled_cells, cmap='nipy_spectral')
-    ax[1, 2].set_title('cell regions')
-    plt.tight_layout()
-    plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
-    plt.close()
-
-    return labeled_cells, cell_props
+    # generate labeled cells
+    rough_labels = measure.label(mask_filtered)
+    distance = ndi.distance_transform_edt(mask_filtered)
+    ws = segmentation.watershed(-distance, markers, connectivity=2, watershed_line=True)
+    labeled_cells = ws * mask_filtered
 
 
+    # measure and store image channel props from content mask
+    print('# of content channels (n_chan): ', n_chan)
+    cell_props = {}
 
-def read_and_process_directory(base_directory, max_cell_area, small_obj_size):
+    if n_chan >= 1:
+        content_props = measure.regionprops(labeled_cells, content)
+        cell_props['image_content'] = content_props
+
+    if n_chan > 1:
+        # store and gate dapi
+        dapi_props = measure.regionprops(labeled_cells, dapi)
+        cell_props['dapi_props'] = dapi_props
+        dapi_blur = filters.gaussian(dapi)
+        dapi_otsu = filters.threshold_otsu(dapi_blur)
+        dapi_mask = dapi_blur > dapi_otsu
+        gated_dapi = dapi_mask * labeled_cells
+
+        # store and gate gfp
+        gfp_props = measure.regionprops(labeled_cells, gfp)
+        cell_props['gfp_props'] = gfp_props
+        gfp_blur = filters.gaussian(gfp)
+        gfp_otsu = filters.threshold_otsu(gfp_blur)
+        gfp_mask = gfp_blur > gfp_otsu
+        gated_gfp = gfp_mask * labeled_cells
+
+        if n_chan == 3:
+            # store and gate cy5
+            cy5_props = measure.regionprops(labeled_cells, cy5)
+            cell_props['cy5_props'] = cy5_props
+            cy5_blur = filters.gaussian(cy5)
+            cy5_otsu = filters.threshold_otsu(cy5_blur)
+            cy5_mask = cy5_blur > cy5_otsu
+            gated_cy5 = cy5_mask * labeled_cells
+
+
+    # define custom label mask colormap
+    plasma = cm.get_cmap('plasma', 256)
+    newcolors = plasma(np.linspace(0, 1, 256))
+    newcolors[0, :] = [0, 0, 0, 1]
+    custom_cmap = ListedColormap(newcolors)
+
+
+    # plot & return results
+    if n_chan == 1:
+        plt.imshow(content_scaled, cmap='gray')
+        plt.title('original content')
+        # plt.show()
+        fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(9,5))
+        ax[0].imshow(content_scaled, cmap='viridis')
+        ax[0].set_title('scaled image')
+        ax[1].imshow(mask_filtered, cmap='gray')
+        ax[1].set_title('mask')
+        ax[2].imshow(labeled_cells, cmap=custom_cmap)
+        ax[2].plot(coords[:,1], coords[:,0], c='yellow', marker = '*', linestyle='', markersize=2)
+        ax[2].set_title('labels')
+        plt.tight_layout()
+        # plt.show()
+        plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
+        plt.close()
+
+    elif n_chan == 2:
+        plt.imshow(content_scaled, cmap='gray')
+        plt.title('original content')
+        # plt.show()
+        fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(12,7))
+        ax[0, 0].imshow(dapi_scaled, cmap=blue_cmap)
+        ax[0, 0].set_title('scaled dapi')
+        ax[0, 1].imshow(mask_filtered, cmap='gray')
+        ax[0, 1].set_title('image mask')
+        ax[0, 2].imshow(labeled_cells, cmap=custom_cmap)
+        ax[0, 2].plot(coords[:,1], coords[:,0], c='yellow', marker = '*', linestyle='', markersize=2)
+        ax[0, 2].set_title('labels')
+        ax[1, 0].imshow(gfp_scaled, cmap=green_cmap)
+        ax[1, 0].set_title('scaled gfp')
+        ax[1, 1].imshow(gfp_mask, cmap='gray')
+        ax[1, 1].set_title('gfp mask')
+        ax[1, 2].imshow(gated_gfp, cmap=custom_cmap)
+        ax[1, 2].set_title('gated gfp')
+        plt.tight_layout()
+        # plt.show()
+        plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
+        plt.close()
+
+    else:
+        plt.imshow(content_scaled, cmap='gray')
+        plt.title('original content')
+        # plt.show()
+        fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,9))
+        ax[0, 0].imshow(dapi_scaled, cmap=blue_cmap)
+        ax[0, 0].set_title('scaled dapi')
+        ax[0, 1].imshow(mask_filtered, cmap='gray')
+        ax[0, 1].set_title('image mask')
+        ax[0, 2].imshow(labeled_cells, cmap=custom_cmap)
+        ax[0, 2].plot(coords[:,1], coords[:,0], c='yellow', marker = '*', linestyle='', markersize=2)
+        ax[0, 2].set_title('labels')
+        ax[1, 0].imshow(gfp_scaled, cmap=green_cmap)
+        ax[1, 0].set_title('scaled gfp')
+        ax[1, 1].imshow(gfp_mask, cmap='gray')
+        ax[1, 1].set_title('gfp mask')
+        ax[1, 2].imshow(gated_gfp, cmap=custom_cmap)
+        ax[1, 2].set_title('gated gfp')
+        ax[2, 0].imshow(cy5_scaled, cmap=green_cmap)
+        ax[2, 0].set_title('scaled cy5')
+        ax[2, 1].imshow(cy5_mask, cmap='gray')
+        ax[2, 1].set_title('cy5 mask')
+        ax[2, 2].imshow(gated_cy5, cmap=custom_cmap)
+        ax[2, 2].set_title('gated cy5')
+        plt.tight_layout()
+        # plt.show()
+        plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
+        plt.close()
+
+    return labeled_cells, cell_props, n_chan        ### cell_props IS NOW A DICTIONARY WITH VARIABLE # OF KEYS (CHANNELS)
+
+
+
+def read_and_process_directory(base_directory, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, formatted_titles):
     # process all .tif files in a passed directory and returns results dataframe (.csv)
 
     # set up paths
@@ -98,38 +259,84 @@ def read_and_process_directory(base_directory, max_cell_area, small_obj_size):
     # iteratively read in images by filenames
     for i, img_path in enumerate(image_list):
         img = plt.imread(img_path)
-        if np.ndim(img) > 2:    # account for duplicated channels in exported cellomics files
-            img = img[:,:,0]
         name = os.path.basename(img_path)
-        labeled_cells, cell_props = process_image(img, max_cell_area, small_obj_size, name, save_path)
+
+        print('\n')
+        print(name)
+
+        labeled_cells, cell_props, n_chan = process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name, save_path)
 
         # save labeled cell images as plots
         # plt.imsave(save_path + '/' + name[:-4] + '_cell_labels.png', labeled_cells, cmap='nipy_spectral')
 
         # save all cell quant in results dataframe
-        for c, cell in enumerate(cell_props):
-            results_df = results_df.append({'_image_name': name, '_img_cell_#': c,
-                '_clone': name[14:17], '_moi': float(name[18:20]), '_days_post_inf': float(name[22:24]),
-                'area': cell_props[c]['area'], 'max': cell_props[c]['max_intensity'],
-                'min': cell_props[c]['min_intensity'], 'mean': cell_props[c]['mean_intensity'],
-                'extent': cell_props[c]['extent'], 'eccentricity': cell_props[c]['eccentricity'],
-                'perimeter': cell_props[c]['perimeter'], 'major_axis': cell_props[c]['major_axis_length'],
-                'minor_axis': cell_props[c]['minor_axis_length']}, ignore_index=True)
+        img_df = pd.DataFrame()
+        count = 0
+        for key in cell_props.keys():
+            channel_data = cell_props[key]
+
+            for c, cell in enumerate(channel_data):
+
+                if count == 0:
+                    if formatted_titles:
+                        img_df = img_df.append({'_image_name': name, '_img_cell_#': c, '_clone': name[14:17],
+                            '_moi': float(name[18:20]), '_days_post_inf': float(name[22:24]),
+                            'area_ch' + str(count): channel_data[c]['area'],
+                            'max_ch' + str(count): channel_data[c]['max_intensity'],
+                            'min_ch' + str(count): channel_data[c]['min_intensity'],
+                            'mean_ch' + str(count): channel_data[c]['mean_intensity'],
+                            'extent_ch' + str(count): channel_data[c]['extent'],
+                            'eccentricity_ch' + str(count): channel_data[c]['eccentricity'],
+                            'perimeter_ch' + str(count): channel_data[c]['perimeter'],
+                            'major_axis_ch' + str(count): channel_data[c]['major_axis_length'],
+                            'minor_axis_ch' + str(count): channel_data[c]['minor_axis_length']}, ignore_index=True)
+
+                    else:
+                        img_df = img_df.append({'_image_name': name, '_img_cell_#': c,
+                            'area_ch' + str(count): channel_data[c]['area'],
+                            'max_ch' + str(count): channel_data[c]['max_intensity'],
+                            'min_ch' + str(count): channel_data[c]['min_intensity'],
+                            'mean_ch' + str(count): channel_data[c]['mean_intensity'],
+                            'extent_ch' + str(count): channel_data[c]['extent'],
+                            'eccentricity_ch' + str(count): channel_data[c]['eccentricity'],
+                            'perimeter_ch' + str(count): channel_data[c]['perimeter'],
+                            'major_axis_ch' + str(count): channel_data[c]['major_axis_length'],
+                            'minor_axis_ch' + str(count): channel_data[c]['minor_axis_length']}, ignore_index=True)
+
+                else:
+                    img_df.loc[img_df.index[c], 'area_ch' + str(count)] = channel_data[c]['area']
+                    img_df.loc[img_df.index[c], 'max_ch' + str(count)] = channel_data[c]['max_intensity']
+                    img_df.loc[img_df.index[c], 'min_ch' + str(count)] = channel_data[c]['min_intensity']
+                    img_df.loc[img_df.index[c], 'mean_ch' + str(count)] = channel_data[c]['mean_intensity']
+                    img_df.loc[img_df.index[c], 'extent_ch' + str(count)] = channel_data[c]['extent']
+                    img_df.loc[img_df.index[c], 'eccentricity_ch' + str(count)] = channel_data[c]['eccentricity']
+                    img_df.loc[img_df.index[c], 'perimeter_ch' + str(count)] = channel_data[c]['perimeter']
+                    img_df.loc[img_df.index[c], 'major_axis_ch' + str(count)] = channel_data[c]['major_axis_length']
+                    img_df.loc[img_df.index[c], 'minor_axis_ch' + str(count)] = channel_data[c]['minor_axis_length']
+
+            count += 1
+
+        results_df = pd.concat([results_df, img_df])
 
     results_df.to_csv(save_path + '/' + '_cell_datasheet.csv')
-    return results_df, save_path
+    return results_df, save_path, n_chan
 
 
-def cluster_results(results_df, save_path, num_clust):
+
+def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
     # simple unsupervised hierarchical clsutering based on cell properties
 
-    # encode clone number as variable
-    clone_key = list(np.unique(results_df['_clone']))
-    clone_temp = results_df['_clone'].values
-    clone_IDs = [ clone_key.index(item) for item in clone_temp ]
+    if formatted_titles:
+        # encode clone number as variable
+        clone_key = list(np.unique(results_df['_clone']))
+        clone_temp = results_df['_clone'].values
+        clone_IDs = [ clone_key.index(item) for item in clone_temp ]
+        # dendrogram
+        data = results_df.iloc[:, 6:].values
+    else:
+        # dendrogram
+        data = results_df.iloc[:, 3:].values
 
-    # dendrogram
-    data = results_df.iloc[:, 6:].values
     plt.figure(figsize=(10, 7))
     plt.title("Cell Property Dendogram")
     shc.set_link_color_palette(['#dbd057', '#75db57', '#57dbaa', '#579bdb', '#8557db'])
@@ -147,8 +354,10 @@ def cluster_results(results_df, save_path, num_clust):
     results_df['tsne-2d-one'] = data_embedded[:,0]
     results_df['tsne-2d-two'] = data_embedded[:,1]
     results_df['cluster_ID'] = ID[:]
-    results_df['clone_ID'] = clone_IDs
-
+    if formatted_titles:
+        results_df['clone_ID'] = clone_IDs
+    else:
+        results_df['clone_ID'] = 'A00'
 
     # tSNE clusters
     plt.figure(figsize=(10, 7))
@@ -164,164 +373,158 @@ def cluster_results(results_df, save_path, num_clust):
     plt.savefig(save_path + '/' + '_tsne_clusters.png')
     plt.close()
 
+    if formatted_titles:
+        # tSNE clone IDs
+        plt.figure(figsize=(10, 7))
+        g = sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="clone_ID",
+            data=results_df,
+            palette=sns.color_palette("hls", len(clone_key)),
+            legend="full",
+            alpha=0.75
+        )
+        plt.title('cell clones')
+        for t, l in zip(g.legend().texts, clone_key): t.set_text(l)
+        plt.savefig(save_path + '/' + '_tsne_clones.png')
+        plt.close()
 
-    # tSNE clone IDs
-    plt.figure(figsize=(10, 7))
-    g = sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="clone_ID",
-        data=results_df,
-        palette=sns.color_palette("hls", len(clone_key)),
-        legend="full",
-        alpha=0.75
-    )
-    plt.title('cell clones')
-    for t, l in zip(g.legend().texts, clone_key): t.set_text(l)
-    plt.savefig(save_path + '/' + '_tsne_clones.png')
-    plt.close()
+        # tSNE days post-infection
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="_days_post_inf",
+            data=results_df,
+            palette=sns.color_palette("magma", len(np.unique(results_df['_days_post_inf']))),
+            legend="full",
+            alpha=0.75
+        )
+        plt.title('days post infection')
+        plt.savefig(save_path + '/' + '_tsne_dpi.png')
+        plt.close()
 
-
-    # tSNE days post-infection
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="_days_post_inf",
-        data=results_df,
-        palette=sns.color_palette("magma", len(np.unique(results_df['_days_post_inf']))),
-        legend="full",
-        alpha=0.75
-    )
-    plt.title('days post infection')
-    plt.savefig(save_path + '/' + '_tsne_dpi.png')
-    plt.close()
-
-
-    # tSNE MOI
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="_moi",
-        data=results_df,
-        palette=sns.color_palette("viridis", len(np.unique(results_df['_moi']))),
-        legend="full",
-        alpha=0.75
-    )
-    plt.title('EBV moi')
-    plt.savefig(save_path + '/' + '_tsne_moi.png')
-    plt.close()
+        # tSNE MOI
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="_moi",
+            data=results_df,
+            palette=sns.color_palette("viridis", len(np.unique(results_df['_moi']))),
+            legend="full",
+            alpha=0.75
+        )
+        plt.title('EBV moi')
+        plt.savefig(save_path + '/' + '_tsne_moi.png')
+        plt.close()
 
 
-    # tSNE cell areas
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="area",
-        data=results_df,
-        palette=sns.color_palette("Spectral_r", as_cmap=True),
-        legend=None,
-        alpha=0.75
-    )
-    norm = plt.Normalize(results_df['area'].min(), results_df['area'].max())
-    sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm)
-    plt.title('cell area')
-    plt.savefig(save_path + '/' + '_tsne_area.png')
-    plt.close()
+    for channel in range(n_chan):
+        # tSNE cell areas
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="area_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("Spectral_r", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['area_ch' + str(channel)].min(), results_df['area_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('cell area' + 'ch' + str(channel))
+        plt.savefig(save_path + '/' + '_tsne_area_ch' + str(channel) + '.png')
+        plt.close()
 
+        # tSNE mean intensities
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="mean_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("Greens", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['mean_ch' + str(channel)].min(), results_df['mean_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="Greens", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('mean cell intensity (a.u)' + 'ch' + str(channel))
+        plt.savefig(save_path + '/' + '_tsne_mean_int_ch' + str(channel) + '.png')
+        plt.close()
 
-    # tSNE mean intensities
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="mean",
-        data=results_df,
-        palette=sns.color_palette("Greens", as_cmap=True),
-        legend=None,
-        alpha=0.75
-    )
-    norm = plt.Normalize(results_df['mean'].min(), results_df['mean'].max())
-    sm = plt.cm.ScalarMappable(cmap="Greens", norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm)
-    plt.title('mean cell intensity (a.u)')
-    plt.savefig(save_path + '/' + '_tsne_mean_int.png')
-    plt.close()
+        # tSNE min intensities
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="min_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("Blues", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['min_ch' + str(channel)].min(), results_df['min_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="Blues", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('min cell intensity (a.u)' + 'ch' + str(channel))
+        plt.savefig(save_path + '/' + '_tsne_min_int_ch' + str(channel) + '.png')
+        plt.close()
 
+        # tSNE max intensities
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="max_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("Reds", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['max_ch' + str(channel)].min(), results_df['max_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="Reds", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('max cell intensity (a.u)' + 'ch' + str(channel))
+        plt.savefig(save_path + '/' + '_tsne_max_int_ch' + str(channel) + '.png')
+        plt.close()
 
-    # tSNE min intensities
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="min",
-        data=results_df,
-        palette=sns.color_palette("Blues", as_cmap=True),
-        legend=None,
-        alpha=0.75
-    )
-    norm = plt.Normalize(results_df['min'].min(), results_df['min'].max())
-    sm = plt.cm.ScalarMappable(cmap="Blues", norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm)
-    plt.title('min cell intensity (a.u)')
-    plt.savefig(save_path + '/' + '_tsne_min_int.png')
-    plt.close()
+        # tSNE eccentricity
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="eccentricity_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("Purples", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['eccentricity_ch' + str(channel)].min(), results_df['eccentricity_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="Purples", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('cell eccentricity (a.u)' + 'ch' + str(channel))
+        plt.savefig(save_path + '/' + '_tsne_eccentricity_ch' + str(channel) + '.png')
+        plt.close()
 
-
-    # tSNE max intensities
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="max",
-        data=results_df,
-        palette=sns.color_palette("Reds", as_cmap=True),
-        legend=None,
-        alpha=0.75
-    )
-    norm = plt.Normalize(results_df['max'].min(), results_df['max'].max())
-    sm = plt.cm.ScalarMappable(cmap="Reds", norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm)
-    plt.title('max cell intensity (a.u)')
-    plt.savefig(save_path + '/' + '_tsne_max_int.png')
-    plt.close()
-
-
-    # tSNE eccentricity
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="eccentricity",
-        data=results_df,
-        palette=sns.color_palette("Purples", as_cmap=True),
-        legend=None,
-        alpha=0.75
-    )
-    norm = plt.Normalize(results_df['eccentricity'].min(), results_df['eccentricity'].max())
-    sm = plt.cm.ScalarMappable(cmap="Purples", norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm)
-    plt.title('cell eccentricity (a.u)')
-    plt.savefig(save_path + '/' + '_tsne_eccentricity.png')
-    plt.close()
-
-
-    # tSNE extent
-    plt.figure(figsize=(10, 7))
-    sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
-        hue="extent",
-        data=results_df,
-        palette=sns.color_palette("Oranges", as_cmap=True),
-        legend=None,
-        alpha=0.75
-    )
-    norm = plt.Normalize(results_df['extent'].min(), results_df['extent'].max())
-    sm = plt.cm.ScalarMappable(cmap="Oranges", norm=norm)
-    sm.set_array([])
-    plt.colorbar(sm)
-    plt.title('cell extent (a.u)')
-    plt.savefig(save_path + '/' + '_tsne_extent.png')
-    plt.close()
+        # tSNE extent
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x="tsne-2d-one", y="tsne-2d-two",
+            hue="extent_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("Oranges", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['extent_ch' + str(channel)].min(), results_df['extent_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="Oranges", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('cell extent (a.u)' + 'ch' + str(channel))
+        plt.savefig(save_path + '/' + '_tsne_extent_ch' + str(channel) + '.png')
+        plt.close()
 
     return
