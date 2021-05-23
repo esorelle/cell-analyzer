@@ -592,7 +592,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             sm = plt.cm.ScalarMappable(cmap="RdYlGn", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
-            plt.title('num features - ' + 'ch' + str(channel))
+            plt.title('avg_feature_area - ' + 'ch' + str(channel))
             plt.savefig(save_path + '/' + '_tsne_avg_feature_area_ch' + str(channel) + '.png')
             plt.close()
 
@@ -610,7 +610,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             sm = plt.cm.ScalarMappable(cmap="RdBu", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
-            plt.title('num features - ' + 'ch' + str(channel))
+            plt.title('avg_feature_int - ' + 'ch' + str(channel))
             plt.savefig(save_path + '/' + '_tsne_avg_feature_int_ch' + str(channel) + '.png')
             plt.close()
 
@@ -628,7 +628,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
-            plt.title('num features - ' + 'ch' + str(channel))
+            plt.title('feature_coverage - ' + 'ch' + str(channel))
             plt.savefig(save_path + '/' + '_tsne_feature_coverage_pct_ch' + str(channel) + '.png')
             plt.close()
 
