@@ -6,10 +6,10 @@ from cell_analyzer import analyzer_core
 
 @click.command(
     'find-cells',
-    help="""analyzes images to segment and analyze cells
+    help="""segment and analyze cells and cell features
     from the command line. The image data path (targetdirectory) must
     exist and be passed as an argument. See below for optional arguments
-    and defaults.""")
+    and their defaults.""")
 @click.option(
     '--segment', type=bool, default=True, show_default=True,
     help="""conditional to segment images in target directory""")

@@ -9,7 +9,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import scipy.cluster.hierarchy as shc
 from datetime import datetime as dt
-from matplotlib.colors import ListedColormap
+from matplotlib.colors import ListedColormap, LogNorm
 from matplotlib import cm
 from skimage import exposure, feature, filters, measure, morphology, segmentation
 from scipy import ndimage as ndi
@@ -297,6 +297,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                         img_df = img_df.append({'_image_name': name, '_img_cell_#': c, '_clone': name[14:17],
                             '_moi': float(name[18:20]), '_days_post_inf': float(name[22:24]),
                             'area_ch' + str(count): channel_data[c]['area'],
+                            'log_area_ch' + str(count): np.log10(channel_data[c]['area']),
                             'max_ch' + str(count): channel_data[c]['max_intensity'],
                             'min_ch' + str(count): channel_data[c]['min_intensity'],
                             'mean_ch' + str(count): channel_data[c]['mean_intensity'],
@@ -309,6 +310,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                     else:
                         img_df = img_df.append({'_image_name': name, '_img_cell_#': c,
                             'area_ch' + str(count): channel_data[c]['area'],
+                            'log_area_ch' + str(count): np.log10(channel_data[c]['area']),
                             'max_ch' + str(count): channel_data[c]['max_intensity'],
                             'min_ch' + str(count): channel_data[c]['min_intensity'],
                             'mean_ch' + str(count): channel_data[c]['mean_intensity'],
@@ -318,8 +320,11 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                             'major_axis_ch' + str(count): channel_data[c]['major_axis_length'],
                             'minor_axis_ch' + str(count): channel_data[c]['minor_axis_length']}, ignore_index=True)
 
+                    img_df['log_area_ch' + str(count)] = img_df['log_area_ch' + str(count)].replace(0, 0.01)
+
                 else:
                     img_df.loc[img_df.index[c], 'area_ch' + str(count)] = channel_data[c]['area']
+                    img_df.loc[img_df.index[c], 'log_area_ch' + str(count)] = np.log10(channel_data[c]['area'])
                     img_df.loc[img_df.index[c], 'max_ch' + str(count)] = channel_data[c]['max_intensity']
                     img_df.loc[img_df.index[c], 'min_ch' + str(count)] = channel_data[c]['min_intensity']
                     img_df.loc[img_df.index[c], 'mean_ch' + str(count)] = channel_data[c]['mean_intensity']
@@ -328,6 +333,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                     img_df.loc[img_df.index[c], 'perimeter_ch' + str(count)] = channel_data[c]['perimeter']
                     img_df.loc[img_df.index[c], 'major_axis_ch' + str(count)] = channel_data[c]['major_axis_length']
                     img_df.loc[img_df.index[c], 'minor_axis_ch' + str(count)] = channel_data[c]['minor_axis_length']
+                    img_df['log_area_ch' + str(count)] = img_df['log_area_ch' + str(count)].replace(0, 0.01)
 
 
                 ### new -- for channel-specific detailed regionprop data to add to img_df
@@ -339,13 +345,22 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                     ch_feat_maxes = np.array([r.max_intensity for r in cell_ch_props])
                     ch_feat_mins = np.array([r.min_intensity for r in cell_ch_props])
                     img_df.loc[img_df.index[c], 'num_features_ch' + str(count + 1)] = len(cell_ch_props)
+                    if len(cell_ch_props) > 0:
+                        img_df.loc[img_df.index[c], 'log_num_features_ch' + str(count + 1)] = np.log10(len(cell_ch_props))
+                    else:
+                        img_df.loc[img_df.index[c], 'log_num_features_ch' + str(count + 1)] = 0.01
                     img_df.loc[img_df.index[c], 'avg_feature_area_ch' +  str(count + 1)] = np.mean(ch_feat_areas)
+                    img_df.loc[img_df.index[c], 'log_avg_feature_area_ch' + str(count)] = np.log10(np.mean(ch_feat_areas))
                     img_df.loc[img_df.index[c], 'median_feature_area_ch' + str(count + 1)] = np.median(ch_feat_areas)
                     img_df.loc[img_df.index[c], 'avg_feature_int_ch' +  str(count + 1)] = np.mean(ch_feat_means)
                     img_df.loc[img_df.index[c], 'avg_feature_max_ch' +  str(count + 1)] = np.mean(ch_feat_maxes)
                     img_df.loc[img_df.index[c], 'avg_feature_min_ch' +  str(count + 1)] = np.mean(ch_feat_mins)
                     img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count + 1)] = np.sum(ch_feat_areas) / np.sum((labeled_cells == c))
                     img_df.fillna(0, inplace=True)
+
+            if count > 0:
+                img_df['log_avg_feature_area_ch' + str(count)] = img_df['log_avg_feature_area_ch' + str(count)].replace(0, 0.01)
+                img_df['log_num_features_ch' + str(count)] = img_df['log_num_features_ch' + str(count)].replace(0, 0.01)
 
             count += 1
 
@@ -496,6 +511,25 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
         plt.savefig(save_path + '/_' + dim_method + '_area_ch' + str(channel) + '.png')
         plt.close()
 
+        # log cell areas
+        plt.figure(figsize=(10, 7))
+        sns.scatterplot(
+            x=x_dim, y=y_dim,
+            hue="log_area_ch" + str(channel),
+            data=results_df,
+            palette=sns.color_palette("mako", as_cmap=True),
+            legend=None,
+            alpha=0.75
+        )
+        norm = plt.Normalize(results_df['log_area_ch' + str(channel)].min(), results_df['log_area_ch' + str(channel)].max())
+        sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
+        sm.set_array([])
+        plt.colorbar(sm)
+        plt.title('log cell area - ' + 'ch' + str(channel))
+        plt.savefig(save_path + '/_' + dim_method + '_log_area_ch' + str(channel) + '.png')
+        plt.close()
+
+
         # mean intensities
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
@@ -606,6 +640,24 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.savefig(save_path + '/_' + dim_method + '_num_features_ch' + str(channel) + '.png')
             plt.close()
 
+            # log_n_channel_features
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x=x_dim, y=y_dim,
+                hue="log_num_features_ch" + str(channel+1),
+                data=results_df,
+                palette=sns.color_palette("CMRmap", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['log_num_features_ch' + str(channel+1)].min(), results_df['log_num_features_ch' + str(channel+1)].max())
+            sm = plt.cm.ScalarMappable(cmap="CMRmap", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('log num features - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/_' + dim_method + '_log_num_features_ch' + str(channel) + '.png')
+            plt.close()
+
             # avg_feature_area_ch
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
@@ -620,8 +672,26 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
-            plt.title('avg_feature_area - ' + 'ch' + str(channel))
+            plt.title('avg feature area - ' + 'ch' + str(channel))
             plt.savefig(save_path + '/_' + dim_method + '_avg_feature_area_ch' + str(channel) + '.png')
+            plt.close()
+
+            # log_avg_feature_area_ch
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x=x_dim, y=y_dim,
+                hue="log_avg_feature_area_ch" + str(channel+1),
+                data=results_df,
+                palette=sns.color_palette("mako", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['log_avg_feature_area_ch' + str(channel+1)].min(), results_df['avg_feature_area_ch' + str(channel+1)].max())
+            sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('log avg feature area - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/_' + dim_method + '_log_avg_feature_area_ch' + str(channel) + '.png')
             plt.close()
 
             # avg_feature_int_ch
@@ -638,7 +708,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             sm = plt.cm.ScalarMappable(cmap="rocket", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
-            plt.title('avg_feature_int - ' + 'ch' + str(channel))
+            plt.title('avg feature int - ' + 'ch' + str(channel))
             plt.savefig(save_path + '/_' + dim_method + '_avg_feature_int_ch' + str(channel) + '.png')
             plt.close()
 
@@ -656,7 +726,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
-            plt.title('feature_coverage - ' + 'ch' + str(channel))
+            plt.title('feature coverage - ' + 'ch' + str(channel))
             plt.savefig(save_path + '/_' + dim_method + '_feature_coverage_pct_ch' + str(channel) + '.png')
             plt.close()
 
