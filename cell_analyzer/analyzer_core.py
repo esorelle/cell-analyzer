@@ -14,7 +14,9 @@ from matplotlib import cm
 from skimage import exposure, feature, filters, measure, morphology, segmentation
 from scipy import ndimage as ndi
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE
+import umap
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -355,7 +357,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
 
 
 
-def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, channel_list):
+def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, formatted_titles, channel_list):
     # simple unsupervised hierarchical clsutering based on cell properties
 
     if formatted_titles:
@@ -381,50 +383,75 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
     cluster = AgglomerativeClustering(n_clusters=num_clust, affinity='euclidean', linkage='ward')
     ID = cluster.fit_predict(data)
 
-    # add columns for tsne labeling
+    # reduction -- UMAP
+    reducer = umap.UMAP()
+    scaled_data = StandardScaler().fit_transform(data)
+    embedding = reducer.fit_transform(scaled_data)
+    results_df['umap-2d-one'] = embedding[:,0]
+    results_df['umap-2d-two'] = embedding[:,1]
+
+    if dim_method == 'umap_c':
+        clusterable_embedding = umap.UMAP(n_neighbors=20, min_dist=0.0, n_components=2, random_state=42).fit_transform(scaled_data)
+        embed_labels = cluster.fit_predict(clusterable_embedding)
+        results_df['umap-2d-one'] = clusterable_embedding[:,0]
+        results_df['umap-2d-two'] = clusterable_embedding[:,1]
+
+    # reduction -- TSNE
     data_embedded = TSNE(n_components=2).fit_transform(data)
     results_df['tsne-2d-one'] = data_embedded[:,0]
     results_df['tsne-2d-two'] = data_embedded[:,1]
-    results_df['cluster_ID'] = ID[:]
+
+    # method-specific cluster labels
+    if dim_method == 'tsne':
+        x_dim = 'tsne-2d-one'
+        y_dim = 'tsne-2d-two'
+        results_df['cluster_ID'] = ID[:]
+    if dim_method in ['umap', 'umap_c']:
+        x_dim = 'umap-2d-one'
+        y_dim = 'umap-2d-two'
+        results_df['cluster_ID'] = embed_labels[:]
+
+    # add columns for tsne labeling
     if formatted_titles:
         results_df['clone_ID'] = clone_IDs
     else:
         results_df['clone_ID'] = 'A00'
 
-    # tSNE clusters
+
+    # clusters
     plt.figure(figsize=(10, 7))
     sns.scatterplot(
-        x="tsne-2d-one", y="tsne-2d-two",
+        x=x_dim, y=y_dim,
         hue="cluster_ID",
         data=results_df,
-        palette=sns.color_palette("Spectral", num_clust),
+        palette=sns.color_palette("hls", num_clust),
         legend="full",
         alpha=0.75
     )
     plt.title('cell clustering')
-    plt.savefig(save_path + '/' + '_tsne_clusters.png')
+    plt.savefig(save_path + '/_' + dim_method + '_clusters.png')
     plt.close()
 
     if formatted_titles:
-        # tSNE clone IDs
+        # clone IDs
         plt.figure(figsize=(10, 7))
         g = sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="clone_ID",
             data=results_df,
-            palette=sns.color_palette("hls", len(clone_key)),
+            palette=sns.color_palette("husl", len(clone_key)),
             legend="full",
             alpha=0.75
         )
         plt.title('cell clones')
         for t, l in zip(g.legend().texts, clone_key): t.set_text(l)
-        plt.savefig(save_path + '/' + '_tsne_clones.png')
+        plt.savefig(save_path + '/_' + dim_method + '_clones.png')
         plt.close()
 
-        # tSNE days post-infection
+        # days post-infection
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="_days_post_inf",
             data=results_df,
             palette=sns.color_palette("magma", len(np.unique(results_df['_days_post_inf']))),
@@ -432,13 +459,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             alpha=0.75
         )
         plt.title('days post infection')
-        plt.savefig(save_path + '/' + '_tsne_dpi.png')
+        plt.savefig(save_path + '/_' + dim_method + '_dpi.png')
         plt.close()
 
-        # tSNE MOI
+        # MOI
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="_moi",
             data=results_df,
             palette=sns.color_palette("viridis", len(np.unique(results_df['_moi']))),
@@ -446,125 +473,125 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             alpha=0.75
         )
         plt.title('EBV moi')
-        plt.savefig(save_path + '/' + '_tsne_moi.png')
+        plt.savefig(save_path + '/_' + dim_method + '_moi.png')
         plt.close()
 
 
     for channel in range(n_chan):
-        # tSNE cell areas
+        # cell areas
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="area_ch" + str(channel),
             data=results_df,
-            palette=sns.color_palette("Spectral_r", as_cmap=True),
+            palette=sns.color_palette("mako", as_cmap=True),
             legend=None,
             alpha=0.75
         )
         norm = plt.Normalize(results_df['area_ch' + str(channel)].min(), results_df['area_ch' + str(channel)].max())
-        sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
         plt.title('cell area - ' + 'ch' + str(channel))
-        plt.savefig(save_path + '/' + '_tsne_area_ch' + str(channel) + '.png')
+        plt.savefig(save_path + '/_' + dim_method + '_area_ch' + str(channel) + '.png')
         plt.close()
 
-        # tSNE mean intensities
+        # mean intensities
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="mean_ch" + str(channel),
             data=results_df,
-            palette=sns.color_palette("Greens", as_cmap=True),
+            palette=sns.color_palette("summer", as_cmap=True),
             legend=None,
             alpha=0.75
         )
         norm = plt.Normalize(results_df['mean_ch' + str(channel)].min(), results_df['mean_ch' + str(channel)].max())
-        sm = plt.cm.ScalarMappable(cmap="Greens", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap="summer", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
         plt.title('mean cell intensity (a.u) - ' + 'ch' + str(channel))
-        plt.savefig(save_path + '/' + '_tsne_mean_int_ch' + str(channel) + '.png')
+        plt.savefig(save_path + '/_' + dim_method + '_mean_int_ch' + str(channel) + '.png')
         plt.close()
 
-        # tSNE min intensities
+        # min intensities
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="min_ch" + str(channel),
             data=results_df,
-            palette=sns.color_palette("Blues", as_cmap=True),
+            palette=sns.color_palette("ocean_r", as_cmap=True),
             legend=None,
             alpha=0.75
         )
         norm = plt.Normalize(results_df['min_ch' + str(channel)].min(), results_df['min_ch' + str(channel)].max())
-        sm = plt.cm.ScalarMappable(cmap="Blues", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap="ocean_r", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
         plt.title('min cell intensity (a.u) - ' + 'ch' + str(channel))
-        plt.savefig(save_path + '/' + '_tsne_min_int_ch' + str(channel) + '.png')
+        plt.savefig(save_path + '/_' + dim_method + '_min_int_ch' + str(channel) + '.png')
         plt.close()
 
-        # tSNE max intensities
+        # tmax intensities
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="max_ch" + str(channel),
             data=results_df,
-            palette=sns.color_palette("Reds", as_cmap=True),
+            palette=sns.color_palette("spring_r", as_cmap=True),
             legend=None,
             alpha=0.75
         )
         norm = plt.Normalize(results_df['max_ch' + str(channel)].min(), results_df['max_ch' + str(channel)].max())
-        sm = plt.cm.ScalarMappable(cmap="Reds", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap="spring_r", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
         plt.title('max cell intensity (a.u) - ' + 'ch' + str(channel))
-        plt.savefig(save_path + '/' + '_tsne_max_int_ch' + str(channel) + '.png')
+        plt.savefig(save_path + '/_' + dim_method + '_max_int_ch' + str(channel) + '.png')
         plt.close()
 
-        # tSNE eccentricity
+        # eccentricity
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="eccentricity_ch" + str(channel),
             data=results_df,
-            palette=sns.color_palette("Purples", as_cmap=True),
+            palette=sns.color_palette("RdYlGn_r", as_cmap=True),
             legend=None,
             alpha=0.75
         )
         norm = plt.Normalize(results_df['eccentricity_ch' + str(channel)].min(), results_df['eccentricity_ch' + str(channel)].max())
-        sm = plt.cm.ScalarMappable(cmap="Purples", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap="RdYlGn_r", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
         plt.title('cell eccentricity (a.u) - ' + 'ch' + str(channel))
-        plt.savefig(save_path + '/' + '_tsne_eccentricity_ch' + str(channel) + '.png')
+        plt.savefig(save_path + '/_' + dim_method + '_eccentricity_ch' + str(channel) + '.png')
         plt.close()
 
-        # tSNE extent
+        # extent
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
-            x="tsne-2d-one", y="tsne-2d-two",
+            x=x_dim, y=y_dim,
             hue="extent_ch" + str(channel),
             data=results_df,
-            palette=sns.color_palette("Oranges", as_cmap=True),
+            palette=sns.color_palette("RdYlBu_r", as_cmap=True),
             legend=None,
             alpha=0.75
         )
         norm = plt.Normalize(results_df['extent_ch' + str(channel)].min(), results_df['extent_ch' + str(channel)].max())
-        sm = plt.cm.ScalarMappable(cmap="Oranges", norm=norm)
+        sm = plt.cm.ScalarMappable(cmap="RdYlBu_r", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
         plt.title('cell extent (a.u) - ' + 'ch' + str(channel))
-        plt.savefig(save_path + '/' + '_tsne_extent_ch' + str(channel) + '.png')
+        plt.savefig(save_path + '/_' + dim_method + '_extent_ch' + str(channel) + '.png')
         plt.close()
 
 
         if np.logical_and(str(channel) in channel_list, n_chan > 1):
-            # tSNE n_channel_features
+            # n_channel_features
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
-                x="tsne-2d-one", y="tsne-2d-two",
+                x=x_dim, y=y_dim,
                 hue="num_features_ch" + str(channel+1),
                 data=results_df,
                 palette=sns.color_palette("CMRmap", as_cmap=True),
@@ -576,49 +603,49 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             sm.set_array([])
             plt.colorbar(sm)
             plt.title('num features - ' + 'ch' + str(channel))
-            plt.savefig(save_path + '/' + '_tsne_num_features_ch' + str(channel) + '.png')
+            plt.savefig(save_path + '/_' + dim_method + '_num_features_ch' + str(channel) + '.png')
             plt.close()
 
-            # tSNE avg_feature_area_ch
+            # avg_feature_area_ch
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
-                x="tsne-2d-one", y="tsne-2d-two",
+                x=x_dim, y=y_dim,
                 hue="avg_feature_area_ch" + str(channel+1),
                 data=results_df,
-                palette=sns.color_palette("RdYlGn", as_cmap=True),
+                palette=sns.color_palette("mako", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
             norm = plt.Normalize(results_df['avg_feature_area_ch' + str(channel+1)].min(), results_df['avg_feature_area_ch' + str(channel+1)].max())
-            sm = plt.cm.ScalarMappable(cmap="RdYlGn", norm=norm)
+            sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
             plt.title('avg_feature_area - ' + 'ch' + str(channel))
-            plt.savefig(save_path + '/' + '_tsne_avg_feature_area_ch' + str(channel) + '.png')
+            plt.savefig(save_path + '/_' + dim_method + '_avg_feature_area_ch' + str(channel) + '.png')
             plt.close()
 
-            # tSNE avg_feature_int_ch
+            # avg_feature_int_ch
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
-                x="tsne-2d-one", y="tsne-2d-two",
+                x=x_dim, y=y_dim,
                 hue="avg_feature_int_ch" + str(channel+1),
                 data=results_df,
-                palette=sns.color_palette("RdBu", as_cmap=True),
+                palette=sns.color_palette("rocket", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
             norm = plt.Normalize(results_df['avg_feature_int_ch' + str(channel+1)].min(), results_df['avg_feature_int_ch' + str(channel+1)].max())
-            sm = plt.cm.ScalarMappable(cmap="RdBu", norm=norm)
+            sm = plt.cm.ScalarMappable(cmap="rocket", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
             plt.title('avg_feature_int - ' + 'ch' + str(channel))
-            plt.savefig(save_path + '/' + '_tsne_avg_feature_int_ch' + str(channel) + '.png')
+            plt.savefig(save_path + '/_' + dim_method + '_avg_feature_int_ch' + str(channel) + '.png')
             plt.close()
 
-            # tSNE feature_coverage_%_ch
+            # feature_coverage_%_ch
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
-                x="tsne-2d-one", y="tsne-2d-two",
+                x=x_dim, y=y_dim,
                 hue="feature_coverage_%_ch" + str(channel+1),
                 data=results_df,
                 palette=sns.color_palette("Spectral_r", as_cmap=True),
@@ -630,7 +657,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, 
             sm.set_array([])
             plt.colorbar(sm)
             plt.title('feature_coverage - ' + 'ch' + str(channel))
-            plt.savefig(save_path + '/' + '_tsne_feature_coverage_pct_ch' + str(channel) + '.png')
+            plt.savefig(save_path + '/_' + dim_method + '_feature_coverage_pct_ch' + str(channel) + '.png')
             plt.close()
 
     return

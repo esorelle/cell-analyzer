@@ -36,11 +36,13 @@ from cell_analyzer import analyzer_core
     help="""conditional addition of formatted title metadata to results dataframes""")
 @click.option(
     '--channel_list', type=list, default=[], show_default=True,
-    help="""specify image channel string (e.g., --channel_list = '12' for channels 1 and 2) to perform intra-cell feature segmentation"""
-)
+    help="""specify image channel string (e.g., --channel_list = '12' for channels 1 and 2) to perform intra-cell feature segmentation""")
 @click.option(
     '--num_clust', type=int, default=10, show_default=True,
     help="""sets # of clusters for segmented cell analysis""")
+@click.option(
+    '--dim_method', type=str, default='umap_c', show_default=True,
+    help="""dimensional reduction method [tsne, umap, or umap_c (for umap-based clustering)]""")
 @click.argument('targetdirectory', type=click.Path(exists=True))  # no help statements for required arguments
 
 def cli(
@@ -54,6 +56,7 @@ def cli(
         formatted_titles,
         channel_list,
         num_clust,
+        dim_method,
         targetdirectory
 ):
     if segment==True:
@@ -65,7 +68,7 @@ def cli(
 
     if analyze==True:
         print('analzying segmented cells...')
-        analyzer_core.cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, channel_list)
+        analyzer_core.cluster_results(results_df, save_path, n_chan, num_clust, dim_method, formatted_titles, channel_list)
         print('...analysis finished' + '\n')
     else:
         print('### no analysis performed ###')
