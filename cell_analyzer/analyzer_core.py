@@ -16,6 +16,9 @@ from scipy import ndimage as ndi
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.manifold import TSNE
 
+import warnings
+warnings.filterwarnings("ignore")
+
 
 def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name='temp.TIF', save_path = '.'):
     img_dims = np.shape(img)
@@ -115,7 +118,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
     for i, point in enumerate(coords):
         markers[point[0], point[1]] = i
 
-    # generate labeled cells
+# generate labeled cells
     rough_labels = measure.label(mask_filtered)
     distance = ndi.distance_transform_edt(mask_filtered)
     ws = segmentation.watershed(-distance, markers, connectivity=2, watershed_line=True)
@@ -126,9 +129,8 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
     print('# of content channels (n_chan): ', n_chan)
     cell_props = {}
 
-    if n_chan >= 1:
-        content_props = measure.regionprops(labeled_cells, content)
-        cell_props['image_content'] = content_props
+    content_props = measure.regionprops(labeled_cells, content)
+    cell_props['image_content'] = content_props
 
     if n_chan > 1:
         # store and gate dapi
@@ -139,6 +141,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         dapi_mask = dapi_blur > dapi_otsu
         gated_dapi = dapi_mask * labeled_cells
 
+    if n_chan >= 2:
         # store and gate gfp
         gfp_props = measure.regionprops(labeled_cells, gfp)
         cell_props['gfp_props'] = gfp_props
@@ -147,14 +150,14 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         gfp_mask = gfp_blur > gfp_otsu
         gated_gfp = gfp_mask * labeled_cells
 
-        if n_chan == 3:
-            # store and gate cy5
-            cy5_props = measure.regionprops(labeled_cells, cy5)
-            cell_props['cy5_props'] = cy5_props
-            cy5_blur = filters.gaussian(cy5)
-            cy5_otsu = filters.threshold_otsu(cy5_blur)
-            cy5_mask = cy5_blur > cy5_otsu
-            gated_cy5 = cy5_mask * labeled_cells
+    if n_chan == 3:
+        # store and gate cy5
+        cy5_props = measure.regionprops(labeled_cells, cy5)
+        cell_props['cy5_props'] = cy5_props
+        cy5_blur = filters.gaussian(cy5)
+        cy5_otsu = filters.threshold_otsu(cy5_blur)
+        cy5_mask = cy5_blur > cy5_otsu
+        gated_cy5 = cy5_mask * labeled_cells
 
 
     # define custom label mask colormap
@@ -238,7 +241,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
 
 
 
-def read_and_process_directory(base_directory, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, formatted_titles):
+def read_and_process_directory(base_directory, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, formatted_titles, channel_list):
     # process all .tif files in a passed directory and returns results dataframe (.csv)
 
     # set up paths
@@ -247,6 +250,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
     save_path = os.path.join(base_directory, save_path)
     print('base: ' + base_directory)
     print('save: ' + save_path)
+    print('channel_list: ', channel_list)
     os.mkdir(save_path)
 
     # get paths for images in base directory
@@ -272,8 +276,17 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
         # save all cell quant in results dataframe
         img_df = pd.DataFrame()
         count = 0
+
         for key in cell_props.keys():
             channel_data = cell_props[key]
+
+            ### new -- for channel-specific detailed regionprop data to add to img_df
+            if str(count) in channel_list:
+                if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
+                    cleaned_channel = img[:,:,count] / np.max(img[:,:,count])
+                    ch_otsu = filters.threshold_otsu(cleaned_channel)
+                    ch_feat_mask = morphology.binary_erosion(cleaned_channel > ch_otsu)
+                    ch_feat_mask = morphology.remove_small_objects(ch_feat_mask, 2)
 
             for c, cell in enumerate(channel_data):
 
@@ -314,6 +327,24 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                     img_df.loc[img_df.index[c], 'major_axis_ch' + str(count)] = channel_data[c]['major_axis_length']
                     img_df.loc[img_df.index[c], 'minor_axis_ch' + str(count)] = channel_data[c]['minor_axis_length']
 
+
+                ### new -- for channel-specific detailed regionprop data to add to img_df
+                if np.logical_and(str(count) in channel_list, len(np.shape(img)) > 2):
+                    cell_ch_labels = measure.label((labeled_cells == c) * ch_feat_mask)
+                    cell_ch_props = measure.regionprops(cell_ch_labels, img[:,:,count])
+                    ch_feat_areas = np.array([r.area for r in cell_ch_props])
+                    ch_feat_means = np.array([r.mean_intensity for r in cell_ch_props])
+                    ch_feat_maxes = np.array([r.max_intensity for r in cell_ch_props])
+                    ch_feat_mins = np.array([r.min_intensity for r in cell_ch_props])
+                    img_df.loc[img_df.index[c], 'num_features_ch' + str(count + 1)] = len(cell_ch_props)
+                    img_df.loc[img_df.index[c], 'avg_feature_area_ch' +  str(count + 1)] = np.mean(ch_feat_areas)
+                    img_df.loc[img_df.index[c], 'median_feature_area_ch' + str(count + 1)] = np.median(ch_feat_areas)
+                    img_df.loc[img_df.index[c], 'avg_feature_int_ch' +  str(count + 1)] = np.mean(ch_feat_means)
+                    img_df.loc[img_df.index[c], 'avg_feature_max_ch' +  str(count + 1)] = np.mean(ch_feat_maxes)
+                    img_df.loc[img_df.index[c], 'avg_feature_min_ch' +  str(count + 1)] = np.mean(ch_feat_mins)
+                    img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count + 1)] = np.sum(ch_feat_areas) / np.sum((labeled_cells == c))
+                    img_df.fillna(0, inplace=True)
+
             count += 1
 
         results_df = pd.concat([results_df, img_df])
@@ -323,7 +354,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
 
 
 
-def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
+def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, channel_list):
     # simple unsupervised hierarchical clsutering based on cell properties
 
     if formatted_titles:
@@ -433,7 +464,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
         sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
-        plt.title('cell area' + 'ch' + str(channel))
+        plt.title('cell area - ' + 'ch' + str(channel))
         plt.savefig(save_path + '/' + '_tsne_area_ch' + str(channel) + '.png')
         plt.close()
 
@@ -451,7 +482,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
         sm = plt.cm.ScalarMappable(cmap="Greens", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
-        plt.title('mean cell intensity (a.u)' + 'ch' + str(channel))
+        plt.title('mean cell intensity (a.u) - ' + 'ch' + str(channel))
         plt.savefig(save_path + '/' + '_tsne_mean_int_ch' + str(channel) + '.png')
         plt.close()
 
@@ -469,7 +500,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
         sm = plt.cm.ScalarMappable(cmap="Blues", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
-        plt.title('min cell intensity (a.u)' + 'ch' + str(channel))
+        plt.title('min cell intensity (a.u) - ' + 'ch' + str(channel))
         plt.savefig(save_path + '/' + '_tsne_min_int_ch' + str(channel) + '.png')
         plt.close()
 
@@ -487,7 +518,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
         sm = plt.cm.ScalarMappable(cmap="Reds", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
-        plt.title('max cell intensity (a.u)' + 'ch' + str(channel))
+        plt.title('max cell intensity (a.u) - ' + 'ch' + str(channel))
         plt.savefig(save_path + '/' + '_tsne_max_int_ch' + str(channel) + '.png')
         plt.close()
 
@@ -505,7 +536,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
         sm = plt.cm.ScalarMappable(cmap="Purples", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
-        plt.title('cell eccentricity (a.u)' + 'ch' + str(channel))
+        plt.title('cell eccentricity (a.u) - ' + 'ch' + str(channel))
         plt.savefig(save_path + '/' + '_tsne_eccentricity_ch' + str(channel) + '.png')
         plt.close()
 
@@ -523,8 +554,82 @@ def cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles):
         sm = plt.cm.ScalarMappable(cmap="Oranges", norm=norm)
         sm.set_array([])
         plt.colorbar(sm)
-        plt.title('cell extent (a.u)' + 'ch' + str(channel))
+        plt.title('cell extent (a.u) - ' + 'ch' + str(channel))
         plt.savefig(save_path + '/' + '_tsne_extent_ch' + str(channel) + '.png')
         plt.close()
+
+
+        if np.logical_and(str(channel) in channel_list, n_chan > 1):
+            # tSNE n_channel_features
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x="tsne-2d-one", y="tsne-2d-two",
+                hue="num_features_ch" + str(channel+1),
+                data=results_df,
+                palette=sns.color_palette("CMRmap", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['num_features_ch' + str(channel+1)].min(), results_df['num_features_ch' + str(channel+1)].max())
+            sm = plt.cm.ScalarMappable(cmap="CMRmap", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('num features - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/' + '_tsne_num_features_ch' + str(channel) + '.png')
+            plt.close()
+
+            # tSNE avg_feature_area_ch
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x="tsne-2d-one", y="tsne-2d-two",
+                hue="avg_feature_area_ch" + str(channel+1),
+                data=results_df,
+                palette=sns.color_palette("RdYlGn", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['avg_feature_area_ch' + str(channel+1)].min(), results_df['avg_feature_area_ch' + str(channel+1)].max())
+            sm = plt.cm.ScalarMappable(cmap="RdYlGn", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('num features - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/' + '_tsne_avg_feature_area_ch' + str(channel) + '.png')
+            plt.close()
+
+            # tSNE avg_feature_int_ch
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x="tsne-2d-one", y="tsne-2d-two",
+                hue="avg_feature_int_ch" + str(channel+1),
+                data=results_df,
+                palette=sns.color_palette("RdBu", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['avg_feature_int_ch' + str(channel+1)].min(), results_df['avg_feature_int_ch' + str(channel+1)].max())
+            sm = plt.cm.ScalarMappable(cmap="RdBu", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('num features - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/' + '_tsne_avg_feature_int_ch' + str(channel) + '.png')
+            plt.close()
+
+            # tSNE feature_coverage_%_ch
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x="tsne-2d-one", y="tsne-2d-two",
+                hue="feature_coverage_%_ch" + str(channel+1),
+                data=results_df,
+                palette=sns.color_palette("Spectral_r", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['feature_coverage_%_ch' + str(channel+1)].min(), results_df['feature_coverage_%_ch' + str(channel+1)].max())
+            sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('num features - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/' + '_tsne_feature_coverage_pct_ch' + str(channel) + '.png')
+            plt.close()
 
     return

@@ -35,7 +35,11 @@ from cell_analyzer import analyzer_core
     '--formatted_titles', type=bool, default=False, show_default=True,
     help="""conditional addition of formatted title metadata to results dataframes""")
 @click.option(
-    '--num_clust', type=int, default=7, show_default=True,
+    '--channel_list', type=list, default=[], show_default=True,
+    help="""specify image channel string (e.g., --channel_list = '12' for channels 1 and 2) to perform intra-cell feature segmentation"""
+)
+@click.option(
+    '--num_clust', type=int, default=10, show_default=True,
     help="""sets # of clusters for segmented cell analysis""")
 @click.argument('targetdirectory', type=click.Path(exists=True))  # no help statements for required arguments
 
@@ -48,19 +52,20 @@ def cli(
         extrema_blur,
         peak_sep,
         formatted_titles,
+        channel_list,
         num_clust,
         targetdirectory
 ):
     if segment==True:
         print('segmenting cells in: ' + targetdirectory + '...')
-        results_df, save_path, n_chan = analyzer_core.read_and_process_directory(targetdirectory, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, formatted_titles)
+        results_df, save_path, n_chan = analyzer_core.read_and_process_directory(targetdirectory, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, formatted_titles, channel_list)
         print('...cell segmentation finished' + '\n')
     else:
         print('### no segmentation performed ###')
 
     if analyze==True:
         print('analzying segmented cells...')
-        analyzer_core.cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles)
+        analyzer_core.cluster_results(results_df, save_path, n_chan, num_clust, formatted_titles, channel_list)
         print('...analysis finished' + '\n')
     else:
         print('### no analysis performed ###')
