@@ -348,6 +348,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
             count += 1
 
         results_df = pd.concat([results_df, img_df])
+        results_df.fillna(0, inplace=True)
 
     results_df.to_csv(save_path + '/' + '_cell_datasheet.csv')
     return results_df, save_path, n_chan
