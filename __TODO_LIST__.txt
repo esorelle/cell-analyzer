@@ -1,3 +1,9 @@
+# 2021-05-26
+clean up channel iteration logic and output dataframe content
+re-run _mixed_test for outputs after refactor
+debug tests, including optional parameters and error handling
+
+
 # 2021-04-17
 handling of mutli-channel images (single-file m x n x c) 
 	--RESOLVED IN REFACTOR (2021-05-21)
