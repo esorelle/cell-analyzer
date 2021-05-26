@@ -34,7 +34,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
 
     else:
         # handle if first channel is blank
-        if np.mean(img[:,:,0][:]) < 0.1:
+        if np.mean(img[:,:,0]) < 0.1:
             img = img[:,:,1:]
             img_dims = np.shape(img)
         # handle other blank channels
@@ -42,31 +42,34 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         base = img[:,:,0]
         # restack image, excluding blank channels
         for channel in range(1, n_chan):
-            if np.sum(img[:,:,channel][:]) > 0.01:
+            if np.sum(img[:,:,channel]) > ( img_dims[0] * img_dims[1] ):
                 base = np.stack((base, img[:,:,channel]), axis=2)
+
         img = base
         img_dims = np.shape(img)
         n_chan = img_dims[2]
 
         ### custom colormaps
         N = 256
+        blank = np.zeros(N)
+        gray = np.linspace(0, 1, N)
         # blue
         blues = np.ones((N,4))
-        blues[:,0] = np.zeros(N)
-        blues[:,1] = np.zeros(N)
-        blues[:,2] = np.linspace(0, 1, N)
+        blues[:,0] = blank
+        blues[:,1] = blank
+        blues[:,2] = gray
         blue_cmap = ListedColormap(blues)
         # green
         greens = np.ones((N,4))
-        greens[:,0] = np.zeros(N)
-        greens[:,1] = np.linspace(0, 1, N)
-        greens[:,2] = np.zeros(N)
+        greens[:,0] = blank
+        greens[:,1] = gray
+        greens[:,2] = blank
         green_cmap = ListedColormap(greens)
         # red
         reds = np.ones((N,4))
-        reds[:,0] = np.linspace(0, 1, N)
-        reds[:,1] = np.zeros(N)
-        reds[:,2] = np.zeros(N)
+        reds[:,0] = gray
+        reds[:,1] = blank
+        reds[:,2] = blank
         red_cmap = ListedColormap(reds)
 
         # separate and scale channels for vis
@@ -78,18 +81,26 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
             dapi = img[:,:,0]
             v_min, v_max = np.percentile(dapi, (1,99))
             dapi_scaled = exposure.rescale_intensity(dapi, in_range=(v_min, v_max))
+
         if n_chan >= 2:
             gfp = img[:,:,1]
             v_min, v_max = np.percentile(gfp, (1,99))
             gfp_scaled = exposure.rescale_intensity(gfp, in_range=(v_min, v_max))
-        if n_chan == 3:
-            cy5 = img[:,:,2]
+
+        if n_chan >= 3:
+            txred = img[:,:,2]
+            v_min, v_max = np.percentile(txred, (1,99))
+            txred_scaled = exposure.rescale_intensity(txred, in_range=(v_min, v_max))
+
+        if n_chan == 4:
+            cy5 = img[:,:,3]
             v_min, v_max = np.percentile(cy5, (1,99))
             cy5_scaled = exposure.rescale_intensity(cy5, in_range=(v_min, v_max))
-        if n_chan > 3:
-            print('handling of more than 3 image channels not supported')
 
-    ### handle single high-res or stitched low-res images (large dimensions)
+        if n_chan > 4:
+            print('handling of more than 4 image channels not supported')
+
+### handle single high-res or stitched low-res images (large dimensions)
     if np.logical_and(np.shape(img)[0] < 2500, np.shape(img)[1] < 2500):
         # correct image and create content mask
         bg = filters.threshold_local(content, norm_window)
@@ -104,6 +115,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         mask_filtered = morphology.remove_small_objects(mask_opened, min_cell_size)
         heavy_blur = filters.gaussian(content, extrema_blur)
         blur_masked = heavy_blur * mask_filtered
+
     else:
         blur = filters.gaussian(content, sigma=2)
         otsu = filters.threshold_otsu(blur)
@@ -120,7 +132,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
     for i, point in enumerate(coords):
         markers[point[0], point[1]] = i
 
-# generate labeled cells
+    # generate labeled cells
     rough_labels = measure.label(mask_filtered)
     distance = ndi.distance_transform_edt(mask_filtered)
     ws = segmentation.watershed(-distance, markers, connectivity=2, watershed_line=True)
@@ -130,9 +142,6 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
     # measure and store image channel props from content mask
     print('# of content channels (n_chan): ', n_chan)
     cell_props = {}
-
-    content_props = measure.regionprops(labeled_cells, content)
-    cell_props['image_content'] = content_props
 
     if n_chan > 1:
         # store and gate dapi
@@ -152,7 +161,16 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         gfp_mask = gfp_blur > gfp_otsu
         gated_gfp = gfp_mask * labeled_cells
 
-    if n_chan == 3:
+    if n_chan >= 3:
+        # store and gate txred
+        txred_props = measure.regionprops(labeled_cells, txred)
+        cell_props['txred_props'] = txred_props
+        txred_blur = filters.gaussian(txred)
+        txred_otsu = filters.threshold_otsu(txred_blur)
+        txred_mask = txred_blur > txred_otsu
+        gated_txred = txred_mask * labeled_cells
+
+    if n_chan == 4:
         # store and gate cy5
         cy5_props = measure.regionprops(labeled_cells, cy5)
         cell_props['cy5_props'] = cy5_props
@@ -160,6 +178,9 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         cy5_otsu = filters.threshold_otsu(cy5_blur)
         cy5_mask = cy5_blur > cy5_otsu
         gated_cy5 = cy5_mask * labeled_cells
+
+    content_props = measure.regionprops(labeled_cells, content)
+    cell_props['image_content'] = content_props
 
 
     # define custom label mask colormap
@@ -171,8 +192,8 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
 
     # plot & return results
     if n_chan == 1:
-        plt.imshow(content_scaled, cmap='gray')
-        plt.title('original content')
+        # plt.imshow(content_scaled, cmap='gray')
+        # plt.title('original content')
         # plt.show()
         fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(9,5))
         ax[0].imshow(content_scaled, cmap='viridis')
@@ -188,8 +209,8 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         plt.close()
 
     elif n_chan == 2:
-        plt.imshow(content_scaled, cmap='gray')
-        plt.title('original content')
+        # plt.imshow(content_scaled, cmap='gray')
+        # plt.title('original content')
         # plt.show()
         fig, ax = plt.subplots(nrows=2, ncols=3, figsize=(12,7))
         ax[0, 0].imshow(dapi_scaled, cmap=blue_cmap)
@@ -210,9 +231,9 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
         plt.close()
 
-    else:
-        plt.imshow(content_scaled, cmap='gray')
-        plt.title('original content')
+    elif n_chan == 3:
+        # plt.imshow(content_scaled, cmap='gray')
+        # plt.title('original content')
         # plt.show()
         fig, ax = plt.subplots(nrows=3, ncols=3, figsize=(15,9))
         ax[0, 0].imshow(dapi_scaled, cmap=blue_cmap)
@@ -228,18 +249,53 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         ax[1, 1].set_title('gfp mask')
         ax[1, 2].imshow(gated_gfp, cmap=custom_cmap)
         ax[1, 2].set_title('gated gfp')
-        ax[2, 0].imshow(cy5_scaled, cmap=green_cmap)
-        ax[2, 0].set_title('scaled cy5')
-        ax[2, 1].imshow(cy5_mask, cmap='gray')
-        ax[2, 1].set_title('cy5 mask')
-        ax[2, 2].imshow(gated_cy5, cmap=custom_cmap)
-        ax[2, 2].set_title('gated cy5')
+        ax[2, 0].imshow(txred_scaled, cmap=red_cmap)
+        ax[2, 0].set_title('scaled txred')
+        ax[2, 1].imshow(txred_mask, cmap='gray')
+        ax[2, 1].set_title('txred mask')
+        ax[2, 2].imshow(gated_txred, cmap=custom_cmap)
+        ax[2, 2].set_title('gated txred')
         plt.tight_layout()
         # plt.show()
         plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
         plt.close()
 
-    return labeled_cells, cell_props, n_chan        ### cell_props IS NOW A DICTIONARY WITH VARIABLE # OF KEYS (CHANNELS)
+    else:
+        # plt.imshow(content_scaled, cmap='gray')
+        # plt.title('original content')
+        # plt.show()
+        fig, ax = plt.subplots(nrows=4, ncols=3, figsize=(16,10))
+        ax[0, 0].imshow(dapi_scaled, cmap=blue_cmap)
+        ax[0, 0].set_title('scaled dapi')
+        ax[0, 1].imshow(mask_filtered, cmap='gray')
+        ax[0, 1].set_title('image mask')
+        ax[0, 2].imshow(labeled_cells, cmap=custom_cmap)
+        ax[0, 2].plot(coords[:,1], coords[:,0], c='yellow', marker = '*', linestyle='', markersize=2)
+        ax[0, 2].set_title('labels')
+        ax[1, 0].imshow(gfp_scaled, cmap=green_cmap)
+        ax[1, 0].set_title('scaled gfp')
+        ax[1, 1].imshow(gfp_mask, cmap='gray')
+        ax[1, 1].set_title('gfp mask')
+        ax[1, 2].imshow(gated_gfp, cmap=custom_cmap)
+        ax[1, 2].set_title('gated gfp')
+        ax[2, 0].imshow(txred_scaled, cmap=red_cmap)
+        ax[2, 0].set_title('scaled txred')
+        ax[2, 1].imshow(txred_mask, cmap='gray')
+        ax[2, 1].set_title('txred mask')
+        ax[2, 2].imshow(gated_txred, cmap=custom_cmap)
+        ax[2, 2].set_title('gated txred')
+        ax[3, 0].imshow(cy5_scaled, cmap='gray')
+        ax[3, 0].set_title('scaled cy5')
+        ax[3, 1].imshow(cy5_mask, cmap='gray')
+        ax[3, 1].set_title('cy5 mask')
+        ax[3, 2].imshow(gated_cy5, cmap=custom_cmap)
+        ax[3, 2].set_title('gated cy5')
+        plt.tight_layout()
+        # plt.show()
+        plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
+        plt.close()
+
+    return labeled_cells, cell_props, n_chan
 
 
 
@@ -272,23 +328,11 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
 
         labeled_cells, cell_props, n_chan = process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name, save_path)
 
-        # save labeled cell images as plots
-        # plt.imsave(save_path + '/' + name[:-4] + '_cell_labels.png', labeled_cells, cmap='nipy_spectral')
-
         # save all cell quant in results dataframe
         img_df = pd.DataFrame()
-        count = 0
 
-        for key in cell_props.keys():
+        for count, key in enumerate(cell_props.keys()):
             channel_data = cell_props[key]
-
-            ### new -- for channel-specific detailed regionprop data to add to img_df
-            if str(count) in channel_list:
-                if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
-                    cleaned_channel = img[:,:,count] / np.max(img[:,:,count])
-                    ch_otsu = filters.threshold_otsu(cleaned_channel)
-                    ch_feat_mask = morphology.binary_erosion(cleaned_channel > ch_otsu)
-                    ch_feat_mask = morphology.remove_small_objects(ch_feat_mask, 2)
 
             for c, cell in enumerate(channel_data):
 
@@ -335,34 +379,40 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                     img_df.loc[img_df.index[c], 'minor_axis_ch' + str(count)] = channel_data[c]['minor_axis_length']
                     img_df['log_area_ch' + str(count)] = img_df['log_area_ch' + str(count)].replace(0, 0.01)
 
-
                 ### new -- for channel-specific detailed regionprop data to add to img_df
-                if np.logical_and(str(count) in channel_list, len(np.shape(img)) > 2):
-                    cell_ch_labels = measure.label((labeled_cells == c) * ch_feat_mask)
-                    cell_ch_props = measure.regionprops(cell_ch_labels, img[:,:,count])
-                    ch_feat_areas = np.array([r.area for r in cell_ch_props])
-                    ch_feat_means = np.array([r.mean_intensity for r in cell_ch_props])
-                    ch_feat_maxes = np.array([r.max_intensity for r in cell_ch_props])
-                    ch_feat_mins = np.array([r.min_intensity for r in cell_ch_props])
-                    img_df.loc[img_df.index[c], 'num_features_ch' + str(count + 1)] = len(cell_ch_props)
-                    if len(cell_ch_props) > 0:
-                        img_df.loc[img_df.index[c], 'log_num_features_ch' + str(count + 1)] = np.log10(len(cell_ch_props))
-                    else:
-                        img_df.loc[img_df.index[c], 'log_num_features_ch' + str(count + 1)] = 0.01
-                    img_df.loc[img_df.index[c], 'avg_feature_area_ch' +  str(count + 1)] = np.mean(ch_feat_areas)
-                    img_df.loc[img_df.index[c], 'log_avg_feature_area_ch' + str(count)] = np.log10(np.mean(ch_feat_areas))
-                    img_df.loc[img_df.index[c], 'median_feature_area_ch' + str(count + 1)] = np.median(ch_feat_areas)
-                    img_df.loc[img_df.index[c], 'avg_feature_int_ch' +  str(count + 1)] = np.mean(ch_feat_means)
-                    img_df.loc[img_df.index[c], 'avg_feature_max_ch' +  str(count + 1)] = np.mean(ch_feat_maxes)
-                    img_df.loc[img_df.index[c], 'avg_feature_min_ch' +  str(count + 1)] = np.mean(ch_feat_mins)
-                    img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count + 1)] = np.sum(ch_feat_areas) / np.sum((labeled_cells == c))
-                    img_df.fillna(0, inplace=True)
+                if str(count) in channel_list:
+                    if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
+                        cleaned_channel = img[:,:,count] / np.max(img[:,:,count])
+                        ch_otsu = filters.threshold_otsu(cleaned_channel)
+                        ch_feat_mask = morphology.binary_erosion(cleaned_channel > ch_otsu)
+                        ch_feat_mask = morphology.remove_small_objects(ch_feat_mask, 2)
 
-            if count > 0:
+                        cell_ch_labels = measure.label((labeled_cells == c) * ch_feat_mask)
+                        cell_ch_props = measure.regionprops(cell_ch_labels, img[:,:,count])
+                        ch_feat_areas = np.array([r.area for r in cell_ch_props])
+                        ch_feat_means = np.array([r.mean_intensity for r in cell_ch_props])
+                        ch_feat_maxes = np.array([r.max_intensity for r in cell_ch_props])
+                        ch_feat_mins = np.array([r.min_intensity for r in cell_ch_props])
+                        img_df.loc[img_df.index[c], 'num_features_ch' + str(count)] = len(cell_ch_props)
+
+                        if len(cell_ch_props) > 0:
+                            img_df.loc[img_df.index[c], 'log_num_features_ch' + str(count)] = np.log10(len(cell_ch_props))
+                        else:
+                            img_df.loc[img_df.index[c], 'log_num_features_ch' + str(count)] = 0.01
+
+                        img_df.loc[img_df.index[c], 'avg_feature_area_ch' +  str(count)] = np.mean(ch_feat_areas)
+                        img_df.loc[img_df.index[c], 'log_avg_feature_area_ch' + str(count)] = np.log10(np.mean(ch_feat_areas))
+                        img_df.loc[img_df.index[c], 'median_feature_area_ch' + str(count)] = np.median(ch_feat_areas)
+                        img_df.loc[img_df.index[c], 'avg_feature_int_ch' +  str(count)] = np.mean(ch_feat_means)
+                        img_df.loc[img_df.index[c], 'avg_feature_max_ch' +  str(count)] = np.mean(ch_feat_maxes)
+                        img_df.loc[img_df.index[c], 'avg_feature_min_ch' +  str(count)] = np.mean(ch_feat_mins)
+                        img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count)] = np.sum(ch_feat_areas) / np.sum((labeled_cells == c))
+                        img_df.fillna(0, inplace=True)
+
+            if count < n_chan:
                 img_df['log_avg_feature_area_ch' + str(count)] = img_df['log_avg_feature_area_ch' + str(count)].replace(0, 0.01)
                 img_df['log_num_features_ch' + str(count)] = img_df['log_num_features_ch' + str(count)].replace(0, 0.01)
 
-            count += 1
 
         results_df = pd.concat([results_df, img_df])
         results_df.fillna(0, inplace=True)
@@ -511,6 +561,7 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
         plt.savefig(save_path + '/_' + dim_method + '_area_ch' + str(channel) + '.png')
         plt.close()
 
+
         # log cell areas
         plt.figure(figsize=(10, 7))
         sns.scatterplot(
@@ -626,13 +677,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
                 x=x_dim, y=y_dim,
-                hue="num_features_ch" + str(channel+1),
+                hue="num_features_ch" + str(channel),
                 data=results_df,
                 palette=sns.color_palette("CMRmap", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
-            norm = plt.Normalize(results_df['num_features_ch' + str(channel+1)].min(), results_df['num_features_ch' + str(channel+1)].max())
+            norm = plt.Normalize(results_df['num_features_ch' + str(channel)].min(), results_df['num_features_ch' + str(channel)].max())
             sm = plt.cm.ScalarMappable(cmap="CMRmap", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
@@ -644,13 +695,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
                 x=x_dim, y=y_dim,
-                hue="log_num_features_ch" + str(channel+1),
+                hue="log_num_features_ch" + str(channel),
                 data=results_df,
                 palette=sns.color_palette("CMRmap", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
-            norm = plt.Normalize(results_df['log_num_features_ch' + str(channel+1)].min(), results_df['log_num_features_ch' + str(channel+1)].max())
+            norm = plt.Normalize(results_df['log_num_features_ch' + str(channel)].min(), results_df['log_num_features_ch' + str(channel)].max())
             sm = plt.cm.ScalarMappable(cmap="CMRmap", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
@@ -662,13 +713,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
                 x=x_dim, y=y_dim,
-                hue="avg_feature_area_ch" + str(channel+1),
+                hue="avg_feature_area_ch" + str(channel),
                 data=results_df,
                 palette=sns.color_palette("mako", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
-            norm = plt.Normalize(results_df['avg_feature_area_ch' + str(channel+1)].min(), results_df['avg_feature_area_ch' + str(channel+1)].max())
+            norm = plt.Normalize(results_df['avg_feature_area_ch' + str(channel)].min(), results_df['avg_feature_area_ch' + str(channel)].max())
             sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
@@ -680,13 +731,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
                 x=x_dim, y=y_dim,
-                hue="log_avg_feature_area_ch" + str(channel+1),
+                hue="log_avg_feature_area_ch" + str(channel),
                 data=results_df,
                 palette=sns.color_palette("mako", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
-            norm = plt.Normalize(results_df['log_avg_feature_area_ch' + str(channel+1)].min(), results_df['avg_feature_area_ch' + str(channel+1)].max())
+            norm = plt.Normalize(results_df['log_avg_feature_area_ch' + str(channel)].min(), results_df['avg_feature_area_ch' + str(channel)].max())
             sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
@@ -698,13 +749,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
                 x=x_dim, y=y_dim,
-                hue="avg_feature_int_ch" + str(channel+1),
+                hue="avg_feature_int_ch" + str(channel),
                 data=results_df,
                 palette=sns.color_palette("rocket", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
-            norm = plt.Normalize(results_df['avg_feature_int_ch' + str(channel+1)].min(), results_df['avg_feature_int_ch' + str(channel+1)].max())
+            norm = plt.Normalize(results_df['avg_feature_int_ch' + str(channel)].min(), results_df['avg_feature_int_ch' + str(channel)].max())
             sm = plt.cm.ScalarMappable(cmap="rocket", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
@@ -716,13 +767,13 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
                 x=x_dim, y=y_dim,
-                hue="feature_coverage_%_ch" + str(channel+1),
+                hue="feature_coverage_%_ch" + str(channel),
                 data=results_df,
                 palette=sns.color_palette("Spectral_r", as_cmap=True),
                 legend=None,
                 alpha=0.75
             )
-            norm = plt.Normalize(results_df['feature_coverage_%_ch' + str(channel+1)].min(), results_df['feature_coverage_%_ch' + str(channel+1)].max())
+            norm = plt.Normalize(results_df['feature_coverage_%_ch' + str(channel)].min(), results_df['feature_coverage_%_ch' + str(channel)].max())
             sm = plt.cm.ScalarMappable(cmap="Spectral_r", norm=norm)
             sm.set_array([])
             plt.colorbar(sm)
