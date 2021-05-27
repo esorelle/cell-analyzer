@@ -1,4 +1,6 @@
 #! /usr/bin/python3
+print('this is cell-analyzer v0.1.0' + '\n')
+print('preparing image segmentation run...' + '\n')
 
 import os
 import glob
@@ -34,7 +36,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
 
     else:
         # handle if first channel is blank
-        if np.mean(img[:,:,0]) < 0.1:
+        if np.mean(img[:,:,0]) < 1:
             img = img[:,:,1:]
             img_dims = np.shape(img)
         # handle other blank channels
@@ -42,7 +44,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         base = img[:,:,0]
         # restack image, excluding blank channels
         for channel in range(1, n_chan):
-            if np.sum(img[:,:,channel]) > ( img_dims[0] * img_dims[1] ):
+            if np.sum(img[:,:,channel]) > (img_dims[0] * img_dims[1] * 0.2):
                 base = np.stack((base, img[:,:,channel]), axis=2)
 
         img = base
@@ -325,6 +327,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
 
         print('\n')
         print(name)
+        print('img ' + str(i + 1) + ' of ' + str(len(image_list)))
 
         labeled_cells, cell_props, n_chan = process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name, save_path)
 
@@ -334,9 +337,16 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
         for count, key in enumerate(cell_props.keys()):
             channel_data = cell_props[key]
 
-            bg = filters.threshold_local(img[:,:,count], norm_window)
+            if np.logical_and(len(np.shape(img)) > 2, str(count) in channel_list):
+                if count < n_chan:
+                    bg = filters.threshold_local(img[:,:,count], norm_window)
 
             for c, cell in enumerate(channel_data):
+
+                if c % 10 == 0:
+                    pct_done = ((c + (len(channel_data) * count)) / len(channel_data))
+                    pct_done = np.round((pct_done / len(cell_props.keys())) * 100, decimals=3)
+                    print('img ' + str(pct_done) + '% complete ' + '(channel ' + str(count + 1) + ' of ' + str(len(cell_props.keys())) + ', cell ' + str(c + 1) + ' of ' + str(len(channel_data))+ ')' )
 
                 if count == 0:
                     if formatted_titles:
@@ -412,9 +422,14 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                         img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count)] = np.sum(ch_feat_mask * (labeled_cells == c)) / np.sum(labeled_cells == c)
                         img_df.fillna(0, inplace=True)
 
-            if count < n_chan:
-                img_df['log_avg_feature_area_ch' + str(count)] = img_df['log_avg_feature_area_ch' + str(count)].replace(0, 0.01)
-                img_df['log_num_features_ch' + str(count)] = img_df['log_num_features_ch' + str(count)].replace(0, 0.01)
+            if count == len(cell_props.keys()) - 1:
+                pct_done = 100.00
+                print('img ' + str(pct_done) + '% complete ' + '(channel ' + str(count + 1) + ' of ' + str(len(cell_props.keys())) + ', cell ' + str(c + 1) + ' of ' + str(len(channel_data))+ ')' )
+
+            if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
+                if str(count) in channel_list:
+                    img_df['log_avg_feature_area_ch' + str(count)] = img_df['log_avg_feature_area_ch' + str(count)].replace(0, 0.01)
+                    img_df['log_num_features_ch' + str(count)] = img_df['log_num_features_ch' + str(count)].replace(0, 0.01)
 
 
         results_df = pd.concat([results_df, img_df])
@@ -730,6 +745,24 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.savefig(save_path + '/_' + dim_method + '_avg_feature_area_ch' + str(channel) + '.png')
             plt.close()
 
+            # median_feature_area_ch
+            plt.figure(figsize=(10, 7))
+            sns.scatterplot(
+                x=x_dim, y=y_dim,
+                hue="median_feature_area_ch" + str(channel),
+                data=results_df,
+                palette=sns.color_palette("mako", as_cmap=True),
+                legend=None,
+                alpha=0.75
+            )
+            norm = plt.Normalize(results_df['median_feature_area_ch' + str(channel)].min(), results_df['median_feature_area_ch' + str(channel)].max())
+            sm = plt.cm.ScalarMappable(cmap="mako", norm=norm)
+            sm.set_array([])
+            plt.colorbar(sm)
+            plt.title('median feature area - ' + 'ch' + str(channel))
+            plt.savefig(save_path + '/_' + dim_method + '_median_feature_area_ch' + str(channel) + '.png')
+            plt.close()
+
             # log_avg_feature_area_ch
             plt.figure(figsize=(10, 7))
             sns.scatterplot(
@@ -784,4 +817,5 @@ def cluster_results(results_df, save_path, n_chan, num_clust, dim_method, format
             plt.savefig(save_path + '/_' + dim_method + '_feature_coverage_pct_ch' + str(channel) + '.png')
             plt.close()
 
+    results_df.to_csv(save_path + '/' + '_cell_datasheet_with_cluster_data.csv')
     return
