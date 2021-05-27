@@ -334,6 +334,8 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
         for count, key in enumerate(cell_props.keys()):
             channel_data = cell_props[key]
 
+            bg = filters.threshold_local(img[:,:,count], norm_window)
+
             for c, cell in enumerate(channel_data):
 
                 if count == 0:
@@ -382,7 +384,8 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                 ### new -- for channel-specific detailed regionprop data to add to img_df
                 if str(count) in channel_list:
                     if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
-                        cleaned_channel = img[:,:,count] / np.max(img[:,:,count])
+                        cleaned_channel = img[:,:,count] / bg
+                        cleaned_channel = filters.gaussian(cleaned_channel, sigma=2)
                         ch_otsu = filters.threshold_otsu(cleaned_channel)
                         ch_feat_mask = morphology.binary_erosion(cleaned_channel > ch_otsu)
                         ch_feat_mask = morphology.remove_small_objects(ch_feat_mask, 2)
@@ -406,7 +409,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                         img_df.loc[img_df.index[c], 'avg_feature_int_ch' +  str(count)] = np.mean(ch_feat_means)
                         img_df.loc[img_df.index[c], 'avg_feature_max_ch' +  str(count)] = np.mean(ch_feat_maxes)
                         img_df.loc[img_df.index[c], 'avg_feature_min_ch' +  str(count)] = np.mean(ch_feat_mins)
-                        img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count)] = np.sum(ch_feat_areas) / np.sum((labeled_cells == c))
+                        img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count)] = np.sum(ch_feat_mask * (labeled_cells == c)) / np.sum(labeled_cells == c)
                         img_df.fillna(0, inplace=True)
 
             if count < n_chan:
