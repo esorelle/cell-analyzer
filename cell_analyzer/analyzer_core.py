@@ -117,7 +117,6 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         mask_filtered = morphology.remove_small_objects(mask_opened, min_cell_size)
         heavy_blur = filters.gaussian(content, extrema_blur)
         blur_masked = heavy_blur * mask_filtered
-
     else:
         blur = filters.gaussian(content, sigma=2)
         otsu = filters.threshold_otsu(blur)
@@ -297,7 +296,7 @@ def process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, 
         plt.savefig(save_path + '/' + name[:-4] + '_cell_labels.png')
         plt.close()
 
-    return labeled_cells, cell_props, n_chan
+    return img, labeled_cells, cell_props, n_chan
 
 
 
@@ -329,7 +328,7 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
         print(name)
         print('img ' + str(i + 1) + ' of ' + str(len(image_list)))
 
-        labeled_cells, cell_props, n_chan = process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name, save_path)
+        img, labeled_cells, cell_props, n_chan = process_image(img, norm_window, min_hole_size, min_cell_size, extrema_blur, peak_sep, name, save_path)
 
         # save all cell quant in results dataframe
         img_df = pd.DataFrame()
@@ -422,14 +421,19 @@ def read_and_process_directory(base_directory, norm_window, min_hole_size, min_c
                         img_df.loc[img_df.index[c], 'feature_coverage_%_ch' + str(count)] = np.sum(ch_feat_mask * (labeled_cells == c)) / np.sum(labeled_cells == c)
                         img_df.fillna(0, inplace=True)
 
-            if count == len(cell_props.keys()) - 1:
-                pct_done = 100.00
-                print('img ' + str(pct_done) + '% complete ' + '(channel ' + str(count + 1) + ' of ' + str(len(cell_props.keys())) + ', cell ' + str(c + 1) + ' of ' + str(len(channel_data))+ ')' )
+            try:
+                c
+            except:
+                print('no cells detected')
+            else:
+                if count == len(cell_props.keys()) - 1:
+                    pct_done = 100.00
+                    print('img ' + str(pct_done) + '% complete ' + '(channel ' + str(count + 1) + ' of ' + str(len(cell_props.keys())) + ', cell ' + str(c + 1) + ' of ' + str(len(channel_data))+ ')' )
 
-            if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
-                if str(count) in channel_list:
-                    img_df['log_avg_feature_area_ch' + str(count)] = img_df['log_avg_feature_area_ch' + str(count)].replace(0, 0.01)
-                    img_df['log_num_features_ch' + str(count)] = img_df['log_num_features_ch' + str(count)].replace(0, 0.01)
+                if np.logical_and(count < n_chan, len(np.shape(img)) > 2):
+                    if str(count) in channel_list:
+                        img_df['log_avg_feature_area_ch' + str(count)] = img_df['log_avg_feature_area_ch' + str(count)].replace(0, 0.01)
+                        img_df['log_num_features_ch' + str(count)] = img_df['log_num_features_ch' + str(count)].replace(0, 0.01)
 
 
         results_df = pd.concat([results_df, img_df])
